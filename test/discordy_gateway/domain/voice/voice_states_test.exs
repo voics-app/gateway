@@ -1,0 +1,81 @@
+defmodule DiscordyGateway.Domain.Voice.VoiceStatesTest do
+  use ExUnit.Case, async: true
+
+  alias DiscordyGateway.Domain.Voice.VoiceStates
+
+  defp req(channel_id, opts \\ []) do
+    %{
+      channel_id: channel_id,
+      self_mute: Keyword.get(opts, :self_mute, false),
+      self_deaf: false,
+      self_video: false,
+      self_stream: false
+    }
+  end
+
+  defp fresh, do: VoiceStates.new()
+
+  test "first join is :joined and records the session" do
+    {change, states} = VoiceStates.update(fresh(), "u1", "s1", req("c1"))
+    assert change == :joined
+    assert VoiceStates.get(states, "u1").channel_id == "c1"
+    assert VoiceStates.get(states, "u1").session_id == "s1"
+  end
+
+  test "changing channel is :moved, same channel is :updated" do
+    {_, states} = VoiceStates.update(fresh(), "u1", "s1", req("c1"))
+    assert {:moved, states} = VoiceStates.update(states, "u1", "s1", req("c2"))
+    assert {:updated, states} = VoiceStates.update(states, "u1", "s1", req("c2", self_mute: true))
+    assert VoiceStates.get(states, "u1").self_mute
+  end
+
+  test "a null channel leaves; leaving when absent is a no-op" do
+    {_, states} = VoiceStates.update(fresh(), "u1", "s1", req("c1"))
+    assert {:left, states} = VoiceStates.update(states, "u1", "s1", req(nil))
+    assert VoiceStates.empty?(states)
+    assert {:noop, ^states} = VoiceStates.update(states, "u1", "s1", req(nil))
+  end
+
+  test "joining from another session takes over the user's state" do
+    {_, states} = VoiceStates.update(fresh(), "u1", "s1", req("c1"))
+    {change, states} = VoiceStates.update(states, "u1", "s2", req("c1"))
+    assert change == :joined
+    assert VoiceStates.get(states, "u1").session_id == "s2"
+  end
+
+  test "remove_session/2 drops the states owned by a session" do
+    {_, states} = VoiceStates.update(fresh(), "u1", "s1", req("c1"))
+    {_, states} = VoiceStates.update(states, "u2", "s2", req("c1"))
+    assert {[%{user_id: "u1"}], states} = VoiceStates.remove_session(states, "s1")
+    assert VoiceStates.user_ids(states) == ["u2"]
+  end
+
+  test "in_channel/2 lists the states of one channel" do
+    {_, states} = VoiceStates.update(fresh(), "u1", "s1", req("c1"))
+    {_, states} = VoiceStates.update(states, "u2", "s2", req("c2"))
+    assert [%{user_id: "u1"}] = VoiceStates.in_channel(states, "c1")
+  end
+
+  test "to_payload/2 renders a Discord VoiceState" do
+    {_, states} = VoiceStates.update(fresh(), "u1", "s1", req("c1"))
+    payload = VoiceStates.to_payload(VoiceStates.get(states, "u1"), "g1")
+
+    assert payload == %{
+             "guild_id" => "g1",
+             "channel_id" => "c1",
+             "user_id" => "u1",
+             "session_id" => "s1",
+             "deaf" => false,
+             "mute" => false,
+             "self_deaf" => false,
+             "self_mute" => false,
+             "self_video" => false,
+             "self_stream" => false,
+             "suppress" => false
+           }
+
+    left = VoiceStates.left_payload(VoiceStates.get(states, "u1"), "g1")
+    assert left["channel_id"] == nil
+    assert left["user_id"] == "u1"
+  end
+end

@@ -121,7 +121,7 @@ defmodule DiscordyGateway.Domain.Permissions do
     end
   end
 
-  defp apply_overwrite(perms, allow, deny), do: (perms &&& ~~~deny) ||| allow
+  defp apply_overwrite(perms, allow, deny), do: (perms &&& bnot(deny)) ||| allow
 
   defp apply_timeout(perms, true), do: perms &&& @timeout_allowed
   defp apply_timeout(perms, false), do: perms
@@ -129,7 +129,7 @@ defmodule DiscordyGateway.Domain.Permissions do
   defp apply_implicit(perms, _type) when (perms &&& @view_channel) == 0, do: 0
 
   defp apply_implicit(perms, type) when type in @text_channel_types and (perms &&& @send_messages) == 0,
-    do: perms &&& ~~~@send_dependent
+    do: perms &&& bnot(@send_dependent)
 
   defp apply_implicit(perms, _type), do: perms
 end

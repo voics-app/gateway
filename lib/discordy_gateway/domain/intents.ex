@@ -51,7 +51,7 @@ defmodule DiscordyGateway.Domain.Intents do
 
   @doc "Validates that `intents` only uses defined bits (close code 4013 otherwise)."
   @spec validate(integer()) :: :ok | {:error, :invalid_intents}
-  def validate(intents) when is_integer(intents) and intents >= 0 and (intents &&& ~~~@all) == 0,
+  def validate(intents) when is_integer(intents) and intents >= 0 and (intents &&& bnot(@all)) == 0,
     do: :ok
 
   def validate(_intents), do: {:error, :invalid_intents}
@@ -59,7 +59,7 @@ defmodule DiscordyGateway.Domain.Intents do
   @doc "Rejects privileged intents that the application is not approved for (close code 4014)."
   @spec check_privileged(non_neg_integer(), non_neg_integer()) :: :ok | {:error, :disallowed_intents}
   def check_privileged(requested, approved) do
-    if (requested &&& @privileged &&& ~~~approved) == 0,
+    if (requested &&& @privileged &&& bnot(approved)) == 0,
       do: :ok,
       else: {:error, :disallowed_intents}
   end
