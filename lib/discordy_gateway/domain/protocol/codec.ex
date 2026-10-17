@@ -68,15 +68,25 @@ defmodule DiscordyGateway.Domain.Protocol.Codec do
   def reconnect, do: frame(:reconnect, nil)
 
   @doc "INVALID_SESSION frame (op 9)."
-  def invalid_session(resumable) when is_boolean(resumable), do: frame(:invalid_session, resumable)
+  def invalid_session(resumable) when is_boolean(resumable),
+    do: frame(:invalid_session, resumable)
 
   @doc "Relay frame for the non-dispatch server-to-client opcodes 20, 22 and 24."
-  def relay(kind, d) when kind in [:e2ee_envelope, :p2p_signal, :watch_together], do: frame(kind, d)
+  def relay(kind, d) when kind in [:e2ee_envelope, :p2p_signal, :watch_together],
+    do: frame(kind, d)
 
   @doc "DISPATCH frame (op 0) as iodata wrapping an already-encoded JSON payload."
   @spec dispatch_iodata(non_neg_integer(), String.t(), iodata()) :: iodata()
   def dispatch_iodata(seq, event_name, encoded_payload) when is_integer(seq) do
-    [~s({"op":0,"s":), Integer.to_string(seq), ~s(,"t":"), event_name, ~s(","d":), encoded_payload, "}"]
+    [
+      ~s({"op":0,"s":),
+      Integer.to_string(seq),
+      ~s(,"t":"),
+      event_name,
+      ~s(","d":),
+      encoded_payload,
+      "}"
+    ]
   end
 
   defp frame(name, d), do: %{"op" => Contracts.opcode(name), "d" => d, "s" => nil, "t" => nil}

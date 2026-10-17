@@ -11,10 +11,17 @@ defmodule DiscordyGateway.Domain.Relay.E2ee do
           :ok | {:error, :sender_device_mismatch | :not_ephemeral | :recipient_not_allowed}
   def authorize(envelope, sender, delivery_mode, allowed_user_ids) do
     cond do
-      envelope.sender_device_id != sender.device_id -> {:error, :sender_device_mismatch}
-      delivery_mode not in ["ephemeral", "p2p"] -> {:error, :not_ephemeral}
-      not Enum.all?(envelope.recipients, &MapSet.member?(allowed_user_ids, &1.user_id)) -> {:error, :recipient_not_allowed}
-      true -> :ok
+      envelope.sender_device_id != sender.device_id ->
+        {:error, :sender_device_mismatch}
+
+      delivery_mode not in ["ephemeral", "p2p"] ->
+        {:error, :not_ephemeral}
+
+      not Enum.all?(envelope.recipients, &MapSet.member?(allowed_user_ids, &1.user_id)) ->
+        {:error, :recipient_not_allowed}
+
+      true ->
+        :ok
     end
   end
 
@@ -30,7 +37,12 @@ defmodule DiscordyGateway.Domain.Relay.E2ee do
     }
 
     for r <- envelope.recipients do
-      entry = %{"user_id" => r.user_id, "device_id" => r.device_id, "ciphertext_b64" => r.ciphertext_b64}
+      entry = %{
+        "user_id" => r.user_id,
+        "device_id" => r.device_id,
+        "ciphertext_b64" => r.ciphertext_b64
+      }
+
       {r.device_id, r.user_id, Map.put(base, "recipients", [entry])}
     end
   end

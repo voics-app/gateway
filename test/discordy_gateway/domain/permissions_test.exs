@@ -40,7 +40,9 @@ defmodule DiscordyGateway.Domain.PermissionsTest do
     end
 
     test "@everyone base OR member roles" do
-      base = Permissions.compute_base(@owner, @guild, roles(%{@mod_role => @ban}), member([@mod_role]))
+      base =
+        Permissions.compute_base(@owner, @guild, roles(%{@mod_role => @ban}), member([@mod_role]))
+
       assert base == (@view ||| @send ||| @history ||| @ban)
     end
 
@@ -50,7 +52,14 @@ defmodule DiscordyGateway.Domain.PermissionsTest do
     end
 
     test "ADMINISTRATOR on any role grants everything" do
-      base = Permissions.compute_base(@owner, @guild, roles(%{@mod_role => @admin}), member([@mod_role]))
+      base =
+        Permissions.compute_base(
+          @owner,
+          @guild,
+          roles(%{@mod_role => @admin}),
+          member([@mod_role])
+        )
+
       assert base == Permissions.all()
     end
 
@@ -62,12 +71,15 @@ defmodule DiscordyGateway.Domain.PermissionsTest do
 
   describe "compute_overwrites/4 (Discord step 3)" do
     test "no overwrites keeps the base" do
-      assert Permissions.compute_overwrites(@view ||| @send, [], member(), @guild) == (@view ||| @send)
+      assert Permissions.compute_overwrites(@view ||| @send, [], member(), @guild) ==
+               (@view ||| @send)
     end
 
     test "@everyone overwrite denies then allows" do
       ow = [%{id: @guild, type: 0, allow: @connect, deny: @send}]
-      assert Permissions.compute_overwrites(@view ||| @send, ow, member(), @guild) == (@view ||| @connect)
+
+      assert Permissions.compute_overwrites(@view ||| @send, ow, member(), @guild) ==
+               (@view ||| @connect)
     end
 
     test "role overwrites: all denies are applied before all allows" do
@@ -82,6 +94,7 @@ defmodule DiscordyGateway.Domain.PermissionsTest do
 
     test "role overwrites only apply to roles the member holds" do
       ow = [%{id: @muted_role, type: 0, allow: 0, deny: @send}]
+
       assert Permissions.compute_overwrites(@view ||| @send, ow, member([@mod_role]), @guild) ==
                (@view ||| @send)
     end
@@ -102,18 +115,24 @@ defmodule DiscordyGateway.Domain.PermissionsTest do
         %{id: @mod_role, type: 0, allow: @view, deny: 0}
       ]
 
-      assert (Permissions.compute_overwrites(@view, ow, member([@mod_role]), @guild) &&& @view) != 0
+      assert (Permissions.compute_overwrites(@view, ow, member([@mod_role]), @guild) &&& @view) !=
+               0
+
       assert (Permissions.compute_overwrites(@view, ow, member(), @guild) &&& @view) == 0
     end
 
     test "a role overwrite whose id is a user is not applied as a role" do
       ow = [%{id: @user, type: 0, allow: 0, deny: @send}]
-      assert Permissions.compute_overwrites(@view ||| @send, ow, member(), @guild) == (@view ||| @send)
+
+      assert Permissions.compute_overwrites(@view ||| @send, ow, member(), @guild) ==
+               (@view ||| @send)
     end
 
     test "administrators ignore overwrites" do
       ow = [%{id: @guild, type: 0, allow: 0, deny: @view}]
-      assert Permissions.compute_overwrites(Permissions.all(), ow, member(), @guild) == Permissions.all()
+
+      assert Permissions.compute_overwrites(Permissions.all(), ow, member(), @guild) ==
+               Permissions.all()
     end
   end
 
@@ -141,13 +160,21 @@ defmodule DiscordyGateway.Domain.PermissionsTest do
     test "missing SEND_MESSAGES in a text channel strips dependent permissions" do
       all_text = @view ||| @send ||| @tts ||| @embed ||| @attach ||| @mention
       ow = [%{id: @guild, type: 0, allow: 0, deny: @send}]
-      perms = Permissions.compute_channel(ctx(%{role_permissions: %{@guild => all_text}, overwrites: ow}))
+
+      perms =
+        Permissions.compute_channel(
+          ctx(%{role_permissions: %{@guild => all_text}, overwrites: ow})
+        )
+
       assert perms == @view
     end
 
     test "voice channels keep embed/attach without SEND_MESSAGES" do
       base = @view ||| @connect ||| @attach
-      perms = Permissions.compute_channel(ctx(%{role_permissions: %{@guild => base}, channel_type: 2}))
+
+      perms =
+        Permissions.compute_channel(ctx(%{role_permissions: %{@guild => base}, channel_type: 2}))
+
       assert perms == base
     end
 
@@ -156,7 +183,13 @@ defmodule DiscordyGateway.Domain.PermissionsTest do
     end
 
     test "timeouts do not affect administrators or the owner" do
-      admin = ctx(%{timed_out: true, role_permissions: roles(%{@mod_role => @admin}), member: member([@mod_role])})
+      admin =
+        ctx(%{
+          timed_out: true,
+          role_permissions: roles(%{@mod_role => @admin}),
+          member: member([@mod_role])
+        })
+
       assert Permissions.compute_channel(admin) == Permissions.all()
 
       owner = ctx(%{timed_out: true, member: %{user_id: @owner, role_ids: []}})

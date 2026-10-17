@@ -56,19 +56,30 @@ defmodule DiscordyGateway.Domain.GuildState do
     }
   end
 
-  def apply_event(state, type, data) when type in ~w(CHANNEL_CREATE CHANNEL_UPDATE THREAD_CREATE THREAD_UPDATE),
-    do: put_channel(state, data)
+  def apply_event(state, type, data)
+      when type in ~w(CHANNEL_CREATE CHANNEL_UPDATE THREAD_CREATE THREAD_UPDATE),
+      do: put_channel(state, data)
 
   def apply_event(state, type, %{"id" => id}) when type in ~w(CHANNEL_DELETE THREAD_DELETE),
-    do: %{state | channels: Map.delete(state.channels, id), overwrites: Map.delete(state.overwrites, id)}
+    do: %{
+      state
+      | channels: Map.delete(state.channels, id),
+        overwrites: Map.delete(state.overwrites, id)
+    }
 
-  def apply_event(state, type, %{"role" => role}) when type in ~w(GUILD_ROLE_CREATE GUILD_ROLE_UPDATE),
-    do: put_role(state, role)
+  def apply_event(state, type, %{"role" => role})
+      when type in ~w(GUILD_ROLE_CREATE GUILD_ROLE_UPDATE),
+      do: put_role(state, role)
 
   def apply_event(state, "GUILD_ROLE_DELETE", %{"role_id" => id}),
-    do: %{state | roles: Map.delete(state.roles, id), role_permissions: Map.delete(state.role_permissions, id)}
+    do: %{
+      state
+      | roles: Map.delete(state.roles, id),
+        role_permissions: Map.delete(state.role_permissions, id)
+    }
 
-  def apply_event(state, "GUILD_MEMBER_ADD", data), do: put_member(state, Map.delete(data, "guild_id"))
+  def apply_event(state, "GUILD_MEMBER_ADD", data),
+    do: put_member(state, Map.delete(data, "guild_id"))
 
   def apply_event(state, "GUILD_MEMBER_UPDATE", data) do
     user_id = get_in(data, ["user", "id"])
@@ -93,8 +104,16 @@ defmodule DiscordyGateway.Domain.GuildState do
   @spec guild_permissions(t(), String.t()) :: non_neg_integer()
   def guild_permissions(state, user_id) do
     case Map.fetch(state.members, user_id) do
-      {:ok, member} -> Permissions.compute_base(state.owner_id, state.id, state.role_permissions, member_ref(member))
-      :error -> 0
+      {:ok, member} ->
+        Permissions.compute_base(
+          state.owner_id,
+          state.id,
+          state.role_permissions,
+          member_ref(member)
+        )
+
+      :error ->
+        0
     end
   end
 
@@ -119,7 +138,8 @@ defmodule DiscordyGateway.Domain.GuildState do
 
   @doc "Whether the channel is a voice or stage channel."
   @spec voice_channel?(t(), String.t()) :: boolean()
-  def voice_channel?(state, channel_id), do: get_in(state.channels, [channel_id, "type"]) in @voice_types
+  def voice_channel?(state, channel_id),
+    do: get_in(state.channels, [channel_id, "type"]) in @voice_types
 
   @doc "Channel by id."
   @spec channel(t(), String.t()) :: map() | nil
@@ -169,13 +189,19 @@ defmodule DiscordyGateway.Domain.GuildState do
     %{
       state
       | roles: Map.put(state.roles, id, role),
-        role_permissions: Map.put(state.role_permissions, id, Permissions.parse(role["permissions"]))
+        role_permissions:
+          Map.put(state.role_permissions, id, Permissions.parse(role["permissions"]))
     }
   end
 
   defp put_channel(state, %{"id" => id} = channel) do
     overwrites = Enum.map(List.wrap(channel["permission_overwrites"]), &parse_overwrite/1)
-    %{state | channels: Map.put(state.channels, id, channel), overwrites: Map.put(state.overwrites, id, overwrites)}
+
+    %{
+      state
+      | channels: Map.put(state.channels, id, channel),
+        overwrites: Map.put(state.overwrites, id, overwrites)
+    }
   end
 
   defp put_member(state, member) do
@@ -194,10 +220,12 @@ defmodule DiscordyGateway.Domain.GuildState do
     }
   end
 
-  defp member_ref(member), do: %{user_id: get_in(member, ["user", "id"]), role_ids: List.wrap(member["roles"])}
+  defp member_ref(member),
+    do: %{user_id: get_in(member, ["user", "id"]), role_ids: List.wrap(member["roles"])}
 
-  defp permission_source(_state, %{"type" => type, "parent_id" => parent}) when type in @thread_types and is_binary(parent),
-    do: parent
+  defp permission_source(_state, %{"type" => type, "parent_id" => parent})
+       when type in @thread_types and is_binary(parent),
+       do: parent
 
   defp permission_source(_state, channel), do: channel["id"]
 
@@ -213,7 +241,11 @@ defmodule DiscordyGateway.Domain.GuildState do
   defp matches?(_member, ""), do: true
 
   defp matches?(member, needle) do
-    [member["nick"], get_in(member, ["user", "username"]), get_in(member, ["user", "global_name"])]
+    [
+      member["nick"],
+      get_in(member, ["user", "username"]),
+      get_in(member, ["user", "global_name"])
+    ]
     |> Enum.any?(&(is_binary(&1) and String.starts_with?(String.downcase(&1), needle)))
   end
 

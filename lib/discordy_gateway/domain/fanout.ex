@@ -39,9 +39,13 @@ defmodule DiscordyGateway.Domain.Fanout do
     |> Map.delete("poll")
   end
 
-  defp gate(event, _data, _channel_id) when event in ~w(GUILD_BAN_ADD GUILD_BAN_REMOVE), do: {:guild, :ban_members}
+  defp gate(event, _data, _channel_id) when event in ~w(GUILD_BAN_ADD GUILD_BAN_REMOVE),
+    do: {:guild, :ban_members}
+
   defp gate("AUDIT_LOG_ENTRY_CREATE", _data, _channel_id), do: {:guild, :view_audit_log}
-  defp gate("APPLICATION_COMMAND_PERMISSIONS_UPDATE", _data, _channel_id), do: :command_permissions
+
+  defp gate("APPLICATION_COMMAND_PERMISSIONS_UPDATE", _data, _channel_id),
+    do: :command_permissions
 
   defp gate(event, data, channel_id) when event in ~w(INVITE_CREATE INVITE_DELETE),
     do: {:channel, channel_id || data["channel_id"], [:view_channel, :manage_channels]}

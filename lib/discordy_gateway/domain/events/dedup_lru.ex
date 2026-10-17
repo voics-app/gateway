@@ -37,10 +37,17 @@ defmodule DiscordyGateway.Domain.Events.DedupLru do
 
   defp insert(lru, id) do
     tick = lru.tick + 1
-    %{lru | tick: tick, by_id: Map.put(lru.by_id, id, tick), by_tick: :gb_trees.insert(tick, id, lru.by_tick)}
+
+    %{
+      lru
+      | tick: tick,
+        by_id: Map.put(lru.by_id, id, tick),
+        by_tick: :gb_trees.insert(tick, id, lru.by_tick)
+    }
   end
 
-  defp evict(%__MODULE__{capacity: capacity, by_id: by_id} = lru) when map_size(by_id) > capacity do
+  defp evict(%__MODULE__{capacity: capacity, by_id: by_id} = lru)
+       when map_size(by_id) > capacity do
     {_tick, id, by_tick} = :gb_trees.take_smallest(lru.by_tick)
     evict(%{lru | by_id: Map.delete(by_id, id), by_tick: by_tick})
   end

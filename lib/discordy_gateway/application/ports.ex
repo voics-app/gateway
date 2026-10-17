@@ -29,5 +29,6 @@ defmodule DiscordyGateway.Application.Ports do
   @spec server_directory() :: module()
   def server_directory, do: fetch(:server_directory)
 
-  defp fetch(port), do: :discordy_gateway |> Application.fetch_env!(:ports) |> Keyword.fetch!(port)
+  defp fetch(port),
+    do: :discordy_gateway |> Application.fetch_env!(:ports) |> Keyword.fetch!(port)
 end

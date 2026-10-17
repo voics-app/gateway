@@ -22,7 +22,13 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          {:ok, properties} <- properties(d),
          {:ok, presence} <- optional_presence(d) do
       {:ok,
-       %{token: token, device_id: device_id, intents: intents, properties: properties, presence: presence}}
+       %{
+         token: token,
+         device_id: device_id,
+         intents: intents,
+         properties: properties,
+         presence: presence
+       }}
     end
   end
 
@@ -64,7 +70,14 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          {:ok, presences} <- boolean(d, "presences", false),
          :ok <- require_query_or_ids(query, user_ids) do
       {:ok,
-       %{guild_id: guild_id, query: query, limit: limit, user_ids: user_ids, nonce: nonce, presences: presences}}
+       %{
+         guild_id: guild_id,
+         query: query,
+         limit: limit,
+         user_ids: user_ids,
+         nonce: nonce,
+         presences: presences
+       }}
     end
   end
 
@@ -124,7 +137,14 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          {:ok, loss} <- non_neg_number(d, "loss_pct"),
          {:ok, rtt} <- non_neg_number(d, "rtt_ms"),
          {:ok, bitrate} <- non_neg_number(d, "bitrate_kbps") do
-      {:ok, %{channel_id: channel_id, jitter_ms: jitter, loss_pct: loss, rtt_ms: rtt, bitrate_kbps: bitrate}}
+      {:ok,
+       %{
+         channel_id: channel_id,
+         jitter_ms: jitter,
+         loss_pct: loss,
+         rtt_ms: rtt,
+         bitrate_kbps: bitrate
+       }}
     end
   end
 
@@ -148,7 +168,12 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
   defp properties(d) do
     case Map.get(d, "properties") do
       %{} = p ->
-        {:ok, %{os: string_or_empty(p, "os"), client: string_or_empty(p, "client"), version: string_or_empty(p, "version")}}
+        {:ok,
+         %{
+           os: string_or_empty(p, "os"),
+           client: string_or_empty(p, "client"),
+           version: string_or_empty(p, "version")
+         }}
 
       nil ->
         {:ok, %{os: "", client: "", version: ""}}
@@ -183,8 +208,11 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
 
   defp activities(d) do
     case Map.get(d, "activities", []) do
-      list when is_list(list) -> if Enum.all?(list, &is_map/1), do: {:ok, list}, else: {:error, {:invalid, "activities"}}
-      _ -> {:error, {:invalid, "activities"}}
+      list when is_list(list) ->
+        if Enum.all?(list, &is_map/1), do: {:ok, list}, else: {:error, {:invalid, "activities"}}
+
+      _ ->
+        {:error, {:invalid, "activities"}}
     end
   end
 

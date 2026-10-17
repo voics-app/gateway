@@ -7,5 +7,6 @@ defmodule DiscordyGateway.Application.Settings do
   @spec public_gateway_url() :: String.t()
   def public_gateway_url, do: fetch(:public_gateway_url)
 
-  defp fetch(key), do: :discordy_gateway |> Application.fetch_env!(:settings) |> Keyword.fetch!(key)
+  defp fetch(key),
+    do: :discordy_gateway |> Application.fetch_env!(:settings) |> Keyword.fetch!(key)
 end

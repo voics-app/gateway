@@ -19,11 +19,17 @@ defmodule DiscordyGateway.Domain.Permissions do
   @view_channel Contracts.permission(:view_channel)
   @send_messages Contracts.permission(:send_messages)
   @timeout_allowed @view_channel ||| Contracts.permission(:read_message_history)
-  @send_dependent Contracts.permission(:mention_everyone) ||| Contracts.permission(:send_tts_messages) |||
+  @send_dependent Contracts.permission(:mention_everyone) |||
+                    Contracts.permission(:send_tts_messages) |||
                     Contracts.permission(:attach_files) ||| Contracts.permission(:embed_links)
   @text_channel_types [0, 1, 3, 5, 10, 11, 12, 15]
 
-  @type overwrite :: %{id: String.t(), type: 0 | 1, allow: non_neg_integer(), deny: non_neg_integer()}
+  @type overwrite :: %{
+          id: String.t(),
+          type: 0 | 1,
+          allow: non_neg_integer(),
+          deny: non_neg_integer()
+        }
   @type member :: %{user_id: String.t(), role_ids: [String.t()]}
   @type channel_context :: %{
           owner_id: String.t(),
@@ -72,9 +78,11 @@ defmodule DiscordyGateway.Domain.Permissions do
   end
 
   @doc "Applies channel overwrites to base permissions (step 3)."
-  @spec compute_overwrites(non_neg_integer(), [overwrite()], member(), String.t()) :: non_neg_integer()
-  def compute_overwrites(base, _overwrites, _member, _guild_id) when (base &&& @administrator) != 0,
-    do: @all
+  @spec compute_overwrites(non_neg_integer(), [overwrite()], member(), String.t()) ::
+          non_neg_integer()
+  def compute_overwrites(base, _overwrites, _member, _guild_id)
+      when (base &&& @administrator) != 0,
+      do: @all
 
   def compute_overwrites(base, overwrites, member, guild_id) do
     base
@@ -128,8 +136,9 @@ defmodule DiscordyGateway.Domain.Permissions do
 
   defp apply_implicit(perms, _type) when (perms &&& @view_channel) == 0, do: 0
 
-  defp apply_implicit(perms, type) when type in @text_channel_types and (perms &&& @send_messages) == 0,
-    do: perms &&& bnot(@send_dependent)
+  defp apply_implicit(perms, type)
+       when type in @text_channel_types and (perms &&& @send_messages) == 0,
+       do: perms &&& bnot(@send_dependent)
 
   defp apply_implicit(perms, _type), do: perms
 end

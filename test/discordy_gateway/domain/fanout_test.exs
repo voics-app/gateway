@@ -26,20 +26,34 @@ defmodule DiscordyGateway.Domain.FanoutTest do
   defp targets(plan), do: plan |> Enum.map(&elem(&1, 0)) |> Enum.sort()
 
   test "channel events reach only members with VIEW_CHANNEL", %{state: state, subs: subs} do
-    plan = Fanout.plan(state, subs, "MESSAGE_CREATE", %{"channel_id" => "11", "content" => "x"}, "11", 0)
+    plan =
+      Fanout.plan(
+        state,
+        subs,
+        "MESSAGE_CREATE",
+        %{"channel_id" => "11", "content" => "x"},
+        "11",
+        0
+      )
+
     assert targets(plan) == [:alice, :owner]
 
     plan = Fanout.plan(state, subs, "MESSAGE_CREATE", %{"channel_id" => "10"}, "10", 0)
     assert targets(plan) == [:alice, :bob, :owner]
   end
 
-  test "channel id falls back to the payload when the envelope has none", %{state: state, subs: subs} do
+  test "channel id falls back to the payload when the envelope has none", %{
+    state: state,
+    subs: subs
+  } do
     plan = Fanout.plan(state, subs, "TYPING_START", %{"channel_id" => "11"}, nil, 0)
     assert targets(plan) == [:alice, :owner]
   end
 
   test "CHANNEL_* events use the channel's own id", %{state: state, subs: subs} do
-    plan = Fanout.plan(state, subs, "CHANNEL_UPDATE", %{"id" => "11", "guild_id" => "100"}, nil, 0)
+    plan =
+      Fanout.plan(state, subs, "CHANNEL_UPDATE", %{"id" => "11", "guild_id" => "100"}, nil, 0)
+
     assert targets(plan) == [:alice, :owner]
   end
 
@@ -49,7 +63,11 @@ defmodule DiscordyGateway.Domain.FanoutTest do
   end
 
   test "intents filter bots", %{state: state} do
-    subs = [sub(:bot_no_msgs, "3", bot: true, intents: 1), sub(:bot_msgs, "3", bot: true, intents: 1 ||| 1 <<< 9)]
+    subs = [
+      sub(:bot_no_msgs, "3", bot: true, intents: 1),
+      sub(:bot_msgs, "3", bot: true, intents: 1 ||| 1 <<< 9)
+    ]
+
     plan = Fanout.plan(state, subs, "MESSAGE_CREATE", %{"channel_id" => "10"}, "10", 0)
     assert targets(plan) == [:bot_msgs]
   end
@@ -68,9 +86,17 @@ defmodule DiscordyGateway.Domain.FanoutTest do
     assert {:user, :full} in plan
   end
 
-  test "bots without MESSAGE_CONTENT get full content when mentioned or authoring", %{state: state} do
+  test "bots without MESSAGE_CONTENT get full content when mentioned or authoring", %{
+    state: state
+  } do
     subs = [sub(:bot, "3", bot: true, intents: 1 <<< 9)]
-    mentioned = %{"channel_id" => "10", "author" => %{"id" => "1"}, "mentions" => [%{"id" => "3"}]}
+
+    mentioned = %{
+      "channel_id" => "10",
+      "author" => %{"id" => "1"},
+      "mentions" => [%{"id" => "3"}]
+    }
+
     assert Fanout.plan(state, subs, "MESSAGE_CREATE", mentioned, "10", 0) == [{:bot, :full}]
 
     authored = %{"channel_id" => "10", "author" => %{"id" => "3"}, "mentions" => []}
@@ -78,7 +104,16 @@ defmodule DiscordyGateway.Domain.FanoutTest do
   end
 
   test "ban events need BAN_MEMBERS", %{state: state, subs: subs} do
-    plan = Fanout.plan(state, subs, "GUILD_BAN_ADD", %{"guild_id" => "100", "user" => %{"id" => "9"}}, nil, 0)
+    plan =
+      Fanout.plan(
+        state,
+        subs,
+        "GUILD_BAN_ADD",
+        %{"guild_id" => "100", "user" => %{"id" => "9"}},
+        nil,
+        0
+      )
+
     assert targets(plan) == [:alice, :owner]
   end
 
@@ -88,7 +123,9 @@ defmodule DiscordyGateway.Domain.FanoutTest do
   end
 
   test "invite events need MANAGE_CHANNELS on the channel", %{state: state, subs: subs} do
-    plan = Fanout.plan(state, subs, "INVITE_CREATE", %{"channel_id" => "10", "code" => "x"}, "10", 0)
+    plan =
+      Fanout.plan(state, subs, "INVITE_CREATE", %{"channel_id" => "10", "code" => "x"}, "10", 0)
+
     assert targets(plan) == [:owner]
   end
 
@@ -105,7 +142,21 @@ defmodule DiscordyGateway.Domain.FanoutTest do
   end
 
   test "strip_content/1 empties content-bearing fields" do
-    data = %{"content" => "x", "embeds" => [1], "attachments" => [1], "components" => [1], "poll" => %{}, "id" => "m"}
-    assert Fanout.strip_content(data) == %{"content" => "", "embeds" => [], "attachments" => [], "components" => [], "id" => "m"}
+    data = %{
+      "content" => "x",
+      "embeds" => [1],
+      "attachments" => [1],
+      "components" => [1],
+      "poll" => %{},
+      "id" => "m"
+    }
+
+    assert Fanout.strip_content(data) == %{
+             "content" => "",
+             "embeds" => [],
+             "attachments" => [],
+             "components" => [],
+             "id" => "m"
+           }
   end
 end

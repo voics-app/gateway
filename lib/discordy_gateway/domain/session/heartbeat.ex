@@ -16,7 +16,8 @@ defmodule DiscordyGateway.Domain.Session.Heartbeat do
   def beat(%__MODULE__{} = hb, now_ms), do: %{hb | last_beat_ms: now_ms}
 
   @spec expired?(t(), integer()) :: boolean()
-  def expired?(%__MODULE__{} = hb, now_ms), do: now_ms - hb.last_beat_ms > div(hb.interval_ms * 3, 2)
+  def expired?(%__MODULE__{} = hb, now_ms),
+    do: now_ms - hb.last_beat_ms > div(hb.interval_ms * 3, 2)
 
   @spec check_interval(t()) :: pos_integer()
   def check_interval(%__MODULE__{interval_ms: interval}), do: interval

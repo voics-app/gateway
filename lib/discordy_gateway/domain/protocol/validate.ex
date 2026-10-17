@@ -9,7 +9,8 @@ defmodule DiscordyGateway.Domain.Protocol.Validate do
     end
   end
 
-  @spec optional_string(map(), String.t()) :: {:ok, String.t() | nil} | {:error, {:invalid, String.t()}}
+  @spec optional_string(map(), String.t()) ::
+          {:ok, String.t() | nil} | {:error, {:invalid, String.t()}}
   def optional_string(map, key) do
     case Map.get(map, key) do
       nil -> {:ok, nil}
@@ -18,7 +19,8 @@ defmodule DiscordyGateway.Domain.Protocol.Validate do
     end
   end
 
-  @spec boolean(map(), String.t(), boolean() | :required) :: {:ok, boolean()} | {:error, {:invalid, String.t()}}
+  @spec boolean(map(), String.t(), boolean() | :required) ::
+          {:ok, boolean()} | {:error, {:invalid, String.t()}}
   def boolean(map, key, default) do
     case Map.get(map, key) do
       value when is_boolean(value) -> {:ok, value}
@@ -27,7 +29,8 @@ defmodule DiscordyGateway.Domain.Protocol.Validate do
     end
   end
 
-  @spec non_neg_integer(map(), String.t()) :: {:ok, non_neg_integer()} | {:error, {:invalid, String.t()}}
+  @spec non_neg_integer(map(), String.t()) ::
+          {:ok, non_neg_integer()} | {:error, {:invalid, String.t()}}
   def non_neg_integer(map, key) do
     case Map.get(map, key) do
       value when is_integer(value) and value >= 0 -> {:ok, value}
@@ -43,7 +46,8 @@ defmodule DiscordyGateway.Domain.Protocol.Validate do
     end
   end
 
-  @spec one_of(map(), String.t(), [String.t()]) :: {:ok, String.t()} | {:error, {:invalid, String.t()}}
+  @spec one_of(map(), String.t(), [String.t()]) ::
+          {:ok, String.t()} | {:error, {:invalid, String.t()}}
   def one_of(map, key, allowed) do
     value = Map.get(map, key)
     if value in allowed, do: {:ok, value}, else: {:error, {:invalid, key}}
@@ -53,9 +57,14 @@ defmodule DiscordyGateway.Domain.Protocol.Validate do
           {:ok, [String.t()] | nil} | {:error, {:invalid, String.t()}}
   def string_list(map, key, presence) do
     case {Map.get(map, key), presence} do
-      {nil, :optional} -> {:ok, nil}
-      {list, _} when is_list(list) and list != [] -> if Enum.all?(list, &is_binary/1), do: {:ok, list}, else: {:error, {:invalid, key}}
-      _ -> {:error, {:invalid, key}}
+      {nil, :optional} ->
+        {:ok, nil}
+
+      {list, _} when is_list(list) and list != [] ->
+        if Enum.all?(list, &is_binary/1), do: {:ok, list}, else: {:error, {:invalid, key}}
+
+      _ ->
+        {:error, {:invalid, key}}
     end
   end
 

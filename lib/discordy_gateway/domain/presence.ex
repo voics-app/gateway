@@ -12,15 +12,22 @@ defmodule DiscordyGateway.Domain.Presence do
           afk: boolean(),
           platform: String.t()
         }
-  @type aggregate :: %{status: String.t(), activities: [map()], client_status: %{String.t() => String.t()}}
+  @type aggregate :: %{
+          status: String.t(),
+          activities: [map()],
+          client_status: %{String.t() => String.t()}
+        }
 
   @spec aggregate([session_presence()]) :: aggregate()
   def aggregate(sessions) do
     visible = Enum.filter(sessions, &Map.has_key?(@priority, &1.status))
 
     case Enum.max_by(visible, &@priority[&1.status], fn -> nil end) do
-      nil -> %{status: "offline", activities: [], client_status: %{}}
-      best -> %{status: best.status, activities: best.activities, client_status: client_status(visible)}
+      nil ->
+        %{status: "offline", activities: [], client_status: %{}}
+
+      best ->
+        %{status: best.status, activities: best.activities, client_status: client_status(visible)}
     end
   end
 
@@ -46,6 +53,8 @@ defmodule DiscordyGateway.Domain.Presence do
   defp client_status(visible) do
     visible
     |> Enum.group_by(& &1.platform)
-    |> Map.new(fn {platform, list} -> {platform, Enum.max_by(list, &@priority[&1.status]).status} end)
+    |> Map.new(fn {platform, list} ->
+      {platform, Enum.max_by(list, &@priority[&1.status]).status}
+    end)
   end
 end

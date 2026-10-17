@@ -13,7 +13,11 @@ defmodule DiscordyGateway.Fixtures do
       "owner_id" => "1",
       "voice_region" => "eu-west",
       "roles" => [
-        %{"id" => "100", "name" => "@everyone", "permissions" => Integer.to_string(@view ||| @send ||| @connect)},
+        %{
+          "id" => "100",
+          "name" => "@everyone",
+          "permissions" => Integer.to_string(@view ||| @send ||| @connect)
+        },
         %{"id" => "300", "name" => "mod", "permissions" => "4"}
       ],
       "channels" => [
@@ -27,7 +31,13 @@ defmodule DiscordyGateway.Fixtures do
             %{"id" => "300", "type" => 0, "allow" => Integer.to_string(@view), "deny" => "0"}
           ]
         },
-        %{"id" => "12", "type" => 2, "name" => "voice", "permission_overwrites" => [], "voice_region" => "us-east"},
+        %{
+          "id" => "12",
+          "type" => 2,
+          "name" => "voice",
+          "permission_overwrites" => [],
+          "voice_region" => "us-east"
+        },
         %{"id" => "13", "type" => 11, "name" => "thread", "parent_id" => "11"}
       ],
       "members" => [
@@ -37,5 +47,4 @@ defmodule DiscordyGateway.Fixtures do
       ]
     }
   end
-
 end

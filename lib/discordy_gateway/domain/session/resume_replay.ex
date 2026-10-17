@@ -8,7 +8,9 @@ defmodule DiscordyGateway.Domain.Session.ResumeReplay do
 
   @spec select([entry()], non_neg_integer(), non_neg_integer()) ::
           {:ok, [entry()]} | {:error, :invalid_seq | :gap}
-  def select(_buffer, client_seq, current_seq) when client_seq > current_seq, do: {:error, :invalid_seq}
+  def select(_buffer, client_seq, current_seq) when client_seq > current_seq,
+    do: {:error, :invalid_seq}
+
   def select(_buffer, seq, seq), do: {:ok, []}
 
   def select(buffer, client_seq, _current_seq) do

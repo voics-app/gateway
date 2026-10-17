@@ -28,7 +28,9 @@ defmodule DiscordyGateway.Domain.Relay.P2pSignalTest do
              {:error, :sender_mismatch}
 
     assert P2pSignal.authorize(@signal, @sender, "ephemeral", ["u1", "u2"]) == {:error, :not_p2p}
-    assert P2pSignal.authorize(@signal, @sender, "p2p", ["u1"]) == {:error, :recipient_not_allowed}
+
+    assert P2pSignal.authorize(@signal, @sender, "p2p", ["u1"]) ==
+             {:error, :recipient_not_allowed}
   end
 
   test "to_payload/1 renders the relayed frame" do

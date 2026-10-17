@@ -91,5 +91,6 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStates do
 
   @doc "VoiceState announcing that the user left (channel_id null)."
   @spec left_payload(state(), String.t() | nil) :: map()
-  def left_payload(state, guild_id), do: state |> to_payload(guild_id) |> Map.put("channel_id", nil)
+  def left_payload(state, guild_id),
+    do: state |> to_payload(guild_id) |> Map.put("channel_id", nil)
 end

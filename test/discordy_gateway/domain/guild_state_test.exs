@@ -23,6 +23,7 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
 
     test "reads the nested GuildFull shape" do
       p = Fixtures.guild_payload()
+
       nested = %{
         "guild" => Map.drop(p, ["roles", "channels", "members"]),
         "roles" => p["roles"],
@@ -82,13 +83,21 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
 
   describe "apply_event/3 keeps the cache current" do
     test "CHANNEL_CREATE/UPDATE/DELETE", %{state: state} do
-      state = GuildState.apply_event(state, "CHANNEL_CREATE", %{"id" => "20", "type" => 0, "guild_id" => "100"})
+      state =
+        GuildState.apply_event(state, "CHANNEL_CREATE", %{
+          "id" => "20",
+          "type" => 0,
+          "guild_id" => "100"
+        })
+
       assert Map.has_key?(state.channels, "20")
 
       hidden = %{
         "id" => "20",
         "type" => 0,
-        "permission_overwrites" => [%{"id" => "100", "type" => 0, "allow" => "0", "deny" => "1024"}]
+        "permission_overwrites" => [
+          %{"id" => "100", "type" => 0, "allow" => "0", "deny" => "1024"}
+        ]
       }
 
       state = GuildState.apply_event(state, "CHANNEL_UPDATE", hidden)
@@ -99,7 +108,13 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
     end
 
     test "THREAD events are tracked as channels", %{state: state} do
-      state = GuildState.apply_event(state, "THREAD_CREATE", %{"id" => "21", "type" => 11, "parent_id" => "10"})
+      state =
+        GuildState.apply_event(state, "THREAD_CREATE", %{
+          "id" => "21",
+          "type" => 11,
+          "parent_id" => "10"
+        })
+
       assert (GuildState.channel_permissions(state, "3", "21", 0) &&& @view) != 0
       state = GuildState.apply_event(state, "THREAD_DELETE", %{"id" => "21"})
       refute Map.has_key?(state.channels, "21")
@@ -121,7 +136,13 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
         })
 
       assert Map.has_key?(state.roles, "301")
-      state = GuildState.apply_event(state, "GUILD_ROLE_DELETE", %{"guild_id" => "100", "role_id" => "301"})
+
+      state =
+        GuildState.apply_event(state, "GUILD_ROLE_DELETE", %{
+          "guild_id" => "100",
+          "role_id" => "301"
+        })
+
       refute Map.has_key?(state.roles, "301")
     end
 
@@ -143,12 +164,24 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
         })
 
       assert (GuildState.channel_permissions(state, "4", "11", 0) &&& @view) != 0
-      state = GuildState.apply_event(state, "GUILD_MEMBER_REMOVE", %{"guild_id" => "100", "user" => %{"id" => "4"}})
+
+      state =
+        GuildState.apply_event(state, "GUILD_MEMBER_REMOVE", %{
+          "guild_id" => "100",
+          "user" => %{"id" => "4"}
+        })
+
       refute GuildState.member?(state, "4")
     end
 
     test "GUILD_UPDATE merges guild fields", %{state: state} do
-      state = GuildState.apply_event(state, "GUILD_UPDATE", %{"id" => "100", "owner_id" => "3", "voice_region" => "x"})
+      state =
+        GuildState.apply_event(state, "GUILD_UPDATE", %{
+          "id" => "100",
+          "owner_id" => "3",
+          "voice_region" => "x"
+        })
+
       assert state.owner_id == "3"
       assert state.voice_region == "x"
       assert state.guild["name"] == "Guild"
@@ -173,12 +206,16 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
     test "per-channel override, then guild region, then default", %{state: state} do
       assert GuildState.voice_region_for(state, "12", "nl-home") == "us-east"
       assert GuildState.voice_region_for(state, "10", "nl-home") == "eu-west"
-      assert GuildState.voice_region_for(%{state | voice_region: nil}, "10", "nl-home") == "nl-home"
+
+      assert GuildState.voice_region_for(%{state | voice_region: nil}, "10", "nl-home") ==
+               "nl-home"
     end
   end
 
   describe "member search" do
-    test "query matches username or nick prefix, case-insensitive, honouring the limit", %{state: state} do
+    test "query matches username or nick prefix, case-insensitive, honouring the limit", %{
+      state: state
+    } do
       assert [%{"user" => %{"id" => "2"}}] = GuildState.search_members(state, "al", 10)
       assert [%{"user" => %{"id" => "2"}}] = GuildState.search_members(state, "ALLY", 10)
       assert length(GuildState.search_members(state, "", 2)) == 2

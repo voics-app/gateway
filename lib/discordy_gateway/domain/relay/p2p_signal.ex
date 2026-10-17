@@ -5,10 +5,17 @@ defmodule DiscordyGateway.Domain.Relay.P2pSignal do
           :ok | {:error, :sender_mismatch | :not_p2p | :recipient_not_allowed}
   def authorize(signal, sender, delivery_mode, recipient_ids) do
     cond do
-      signal.from_user_id != sender.user_id or signal.from_device_id != sender.device_id -> {:error, :sender_mismatch}
-      delivery_mode != "p2p" -> {:error, :not_p2p}
-      signal.to_user_id not in recipient_ids -> {:error, :recipient_not_allowed}
-      true -> :ok
+      signal.from_user_id != sender.user_id or signal.from_device_id != sender.device_id ->
+        {:error, :sender_mismatch}
+
+      delivery_mode != "p2p" ->
+        {:error, :not_p2p}
+
+      signal.to_user_id not in recipient_ids ->
+        {:error, :recipient_not_allowed}
+
+      true ->
+        :ok
     end
   end
 

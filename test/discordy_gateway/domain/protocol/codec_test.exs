@@ -57,7 +57,9 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
     end
 
     test "decodes an optional initial presence" do
-      payload = Map.put(@identify, "presence", %{"status" => "dnd", "activities" => [], "afk" => false})
+      payload =
+        Map.put(@identify, "presence", %{"status" => "dnd", "activities" => [], "afk" => false})
+
       assert {:ok, {:identify, identify}} = Codec.decode_inbound(frame(2, payload))
       assert identify.presence == %{status: "dnd", activities: [], afk: false}
     end
@@ -100,8 +102,15 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
                self_stream: false
              }
 
-      leave = %{"guild_id" => nil, "channel_id" => nil, "self_mute" => false, "self_deaf" => false}
-      assert {:ok, {:voice_state_update, %{channel_id: nil}}} = Codec.decode_inbound(frame(4, leave))
+      leave = %{
+        "guild_id" => nil,
+        "channel_id" => nil,
+        "self_mute" => false,
+        "self_deaf" => false
+      }
+
+      assert {:ok, {:voice_state_update, %{channel_id: nil}}} =
+               Codec.decode_inbound(frame(4, leave))
     end
 
     test "rejects non-boolean flags" do
@@ -113,6 +122,7 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
   describe "op 6 RESUME" do
     test "decodes token, session and seq" do
       d = %{"token" => "t", "session_id" => "s", "seq" => 7}
+
       assert Codec.decode_inbound(frame(6, d)) ==
                {:ok, {:resume, %{token: "t", session_id: "s", seq: 7}}}
     end
@@ -127,11 +137,20 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
     test "decodes a query request" do
       d = %{"guild_id" => "1", "query" => "ab", "limit" => 10, "nonce" => "n"}
       assert {:ok, {:request_guild_members, r}} = Codec.decode_inbound(frame(8, d))
-      assert r == %{guild_id: "1", query: "ab", limit: 10, user_ids: nil, nonce: "n", presences: false}
+
+      assert r == %{
+               guild_id: "1",
+               query: "ab",
+               limit: 10,
+               user_ids: nil,
+               nonce: "n",
+               presences: false
+             }
     end
 
     test "decodes a user_ids request" do
       d = %{"guild_id" => "1", "limit" => 0, "user_ids" => ["2", "3"]}
+
       assert {:ok, {:request_guild_members, %{user_ids: ["2", "3"], query: nil}}} =
                Codec.decode_inbound(frame(8, d))
     end
@@ -160,9 +179,15 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
     end
 
     test "rejects invalid base64 ciphertext and unknown content types" do
-      bad_b64 = put_in(@envelope, ["recipients"], [%{"user_id" => "u", "device_id" => "d", "ciphertext_b64" => "%%"}])
+      bad_b64 =
+        put_in(@envelope, ["recipients"], [
+          %{"user_id" => "u", "device_id" => "d", "ciphertext_b64" => "%%"}
+        ])
+
       assert Codec.decode_inbound(frame(20, bad_b64)) == {:error, 4002}
-      assert Codec.decode_inbound(frame(20, %{@envelope | "content_type" => "x"})) == {:error, 4002}
+
+      assert Codec.decode_inbound(frame(20, %{@envelope | "content_type" => "x"})) ==
+               {:error, 4002}
     end
 
     test "rejects an empty recipient list" do
@@ -195,7 +220,9 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
 
     test "decodes every kind" do
       for kind <- ~w(offer answer ice bye) do
-        assert {:ok, {:p2p_signal, s}} = Codec.decode_inbound(frame(22, %{@signal | "kind" => kind}))
+        assert {:ok, {:p2p_signal, s}} =
+                 Codec.decode_inbound(frame(22, %{@signal | "kind" => kind}))
+
         assert s.kind == kind
         assert s.to_device_id == "d2"
       end
@@ -208,13 +235,27 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
 
   describe "op 23 VOICE_TELEMETRY" do
     test "decodes numeric samples" do
-      d = %{"channel_id" => "c", "jitter_ms" => 3.5, "loss_pct" => 0, "rtt_ms" => 40, "bitrate_kbps" => 64}
+      d = %{
+        "channel_id" => "c",
+        "jitter_ms" => 3.5,
+        "loss_pct" => 0,
+        "rtt_ms" => 40,
+        "bitrate_kbps" => 64
+      }
+
       assert {:ok, {:voice_telemetry, t}} = Codec.decode_inbound(frame(23, d))
       assert t == %{channel_id: "c", jitter_ms: 3.5, loss_pct: 0, rtt_ms: 40, bitrate_kbps: 64}
     end
 
     test "rejects negative or non-numeric samples" do
-      d = %{"channel_id" => "c", "jitter_ms" => -1, "loss_pct" => 0, "rtt_ms" => 40, "bitrate_kbps" => 64}
+      d = %{
+        "channel_id" => "c",
+        "jitter_ms" => -1,
+        "loss_pct" => 0,
+        "rtt_ms" => 40,
+        "bitrate_kbps" => 64
+      }
+
       assert Codec.decode_inbound(frame(23, d)) == {:error, 4002}
     end
   end
@@ -239,7 +280,12 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
 
   describe "outbound frames" do
     test "hello" do
-      assert Codec.hello(41_250) == %{"op" => 10, "d" => %{"heartbeat_interval" => 41_250}, "s" => nil, "t" => nil}
+      assert Codec.hello(41_250) == %{
+               "op" => 10,
+               "d" => %{"heartbeat_interval" => 41_250},
+               "s" => nil,
+               "t" => nil
+             }
     end
 
     test "heartbeat ack, heartbeat request, reconnect" do
@@ -254,14 +300,22 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
     end
 
     test "relay frames for ops 20, 22 and 24" do
-      assert Codec.relay(:e2ee_envelope, %{"a" => 1}) == %{"op" => 20, "d" => %{"a" => 1}, "s" => nil, "t" => nil}
+      assert Codec.relay(:e2ee_envelope, %{"a" => 1}) == %{
+               "op" => 20,
+               "d" => %{"a" => 1},
+               "s" => nil,
+               "t" => nil
+             }
+
       assert Codec.relay(:p2p_signal, %{})["op"] == 22
       assert Codec.relay(:watch_together, %{})["op"] == 24
     end
 
     test "dispatch frame as iodata around a pre-encoded payload" do
       iodata = Codec.dispatch_iodata(12, "MESSAGE_CREATE", ~s({"id":"1"}))
-      assert IO.iodata_to_binary(iodata) == ~s({"op":0,"s":12,"t":"MESSAGE_CREATE","d":{"id":"1"}})
+
+      assert IO.iodata_to_binary(iodata) ==
+               ~s({"op":0,"s":12,"t":"MESSAGE_CREATE","d":{"id":"1"}})
     end
   end
 end
