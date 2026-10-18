@@ -29,7 +29,8 @@ config :discordy_gateway, :settings,
   heartbeat_interval_ms: 1_000,
   resume_window_ms: 300,
   identify_timeout_ms: 300,
-  guild_idle_ms: 200
+  guild_idle_ms: 200,
+  e2ee_settings_wait_interval_ms: 1
 
 config :discordy_gateway, :http,
   api_url: "http://api.test",

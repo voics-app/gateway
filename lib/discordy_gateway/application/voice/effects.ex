@@ -17,6 +17,9 @@ defmodule DiscordyGateway.Application.Voice.Effects do
   defp run_one({:rejected, pid, payload}, _broadcast),
     do: Dispatch.to_sessions([pid], "VOICE_STATE_UPDATE", payload)
 
+  defp run_one({:join_failed, pid, payload}, _broadcast),
+    do: Dispatch.to_sessions([pid], "VOICE_JOIN_FAILED", payload)
+
   defp run_one({:relay_watch, session_ids, payload}, _broadcast) do
     for session_id <- session_ids,
         pid = Ports.session_directory().whereis(session_id),

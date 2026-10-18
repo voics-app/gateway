@@ -75,6 +75,7 @@ reported at once. Names follow P2.
 | `VOICE_TOKEN_SECRET` | yes | HS256 secret, at least 16 bytes |
 | `PUBLIC_GATEWAY_URL` | yes | advertised as `resume_gateway_url` |
 | `DEFAULT_VOICE_REGION` | no (`nl-home`) | region used when guild and channel set none |
+| `E2EE_SETTINGS_UNAVAILABLE_POLICY` | no (`open`) | what a voice join does when Valkey cannot tell whether the participants have `e2ee_calls_default` on: `open` joins unencrypted and logs a warning, `closed` encrypts the call, `wait` retries the read (3 attempts, about 2 s apart) and then refuses the join with `VOICE_JOIN_FAILED` `{"error": "e2ee_settings_unavailable"}` |
 | `RELEASE_COOKIE` | prod | Erlang distribution cookie |
 | `CLUSTER_DNS_QUERY` | no | headless-service DNS name; enables libcluster DNS polling |
 | `PORT` | no (`4000`) | HTTP port |

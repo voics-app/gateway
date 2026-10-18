@@ -9,12 +9,14 @@ defmodule DiscordyGateway.Application.Voice.Room do
     * `{:broadcast_state, payload, gate_channel_id}` - VOICE_STATE_UPDATE for everyone entitled to see it
     * `{:server_update, pid, payload}` - VOICE_SERVER_UPDATE for one session
     * `{:rejected, pid, payload}` - the join failed; `payload` is the session's own left state
+    * `{:join_failed, pid, payload}` - VOICE_JOIN_FAILED, the reason a join was refused (the
+      participants' call settings could not be read under the `wait` policy)
     * `{:relay_watch, session_ids, payload}` - WATCH_TOGETHER relay frame (op 24) for sessions
     * `{:relay_watch_to_pid, pid, payload}` - the current Watch Together state for a late joiner
   """
 
   alias DiscordyGateway.Application.Ports
-  alias DiscordyGateway.Application.Voice.Allocator
+  alias DiscordyGateway.Application.Voice.{Allocator, E2eePolicy}
   alias DiscordyGateway.Domain.Relay.WatchTogether
   alias DiscordyGateway.Domain.Voice.{VoiceNode, VoiceStates, VoiceTokenClaims}
 
@@ -118,12 +120,27 @@ defmodule DiscordyGateway.Application.Voice.Room do
   end
 
   defp joined(room, states, previous, member, request, join_opts) do
+    others =
+      states
+      |> VoiceStates.in_channel(request.channel_id)
+      |> Enum.reject(&(&1.user_id == member.user_id))
+
+    case E2eePolicy.setting_flags([member.user_id | Enum.map(others, & &1.user_id)]) do
+      {:ok, setting_flags} ->
+        admitted(room, states, previous, member, request, join_opts, {others, setting_flags})
+
+      {:error, :settings_unavailable} ->
+        refused_for_settings(room, member, request)
+    end
+  end
+
+  defp admitted(room, states, previous, member, request, join_opts, {others, setting_flags}) do
     case ensure_node(room, join_opts.region) do
       {:ok, room, node} ->
         room = leave_previous_channel(%{room | states: states}, previous, request.channel_id)
 
         {states, e2ee, upgraded} =
-          settle_call_e2ee(room.states, member, request.channel_id, join_opts)
+          settle_call_e2ee(room.states, member, others, setting_flags, join_opts)
 
         room = %{room | states: states}
 
@@ -146,15 +163,7 @@ defmodule DiscordyGateway.Application.Voice.Room do
   # A call is E2EE for everyone once the channel requires it, or the joiner or someone already in
   # the channel has the account setting on, or someone already in it is encrypted. Participants
   # who were not encrypted when the call became E2EE are returned in `upgraded`.
-  defp settle_call_e2ee(states, member, channel_id, join_opts) do
-    others =
-      states
-      |> VoiceStates.in_channel(channel_id)
-      |> Enum.reject(&(&1.user_id == member.user_id))
-
-    other_ids = Enum.map(others, & &1.user_id)
-    enabled = MapSet.new(Ports.call_defaults().enabled_user_ids([member.user_id | other_ids]))
-    setting_flags = Enum.map([member.user_id | other_ids], &MapSet.member?(enabled, &1))
+  defp settle_call_e2ee(states, member, others, setting_flags, join_opts) do
     encrypted_flags = Enum.map(others, & &1.e2ee)
 
     e2ee = VoiceTokenClaims.call_e2ee?(join_opts.e2ee, setting_flags ++ encrypted_flags)
@@ -169,6 +178,20 @@ defmodule DiscordyGateway.Application.Voice.Room do
     for state <- upgraded, pid = whereis.(state.session_id), is_pid(pid) do
       server_update(room, node, state, true, pid)
     end
+  end
+
+  defp refused_for_settings(room, member, request) do
+    join_failed = %{
+      "error" => "e2ee_settings_unavailable",
+      "guild_id" => room.guild_id,
+      "channel_id" => request.channel_id
+    }
+
+    {rejected_room(room, member),
+     [
+       {:rejected, member.pid, rejected_payload(room, member, request)},
+       {:join_failed, member.pid, join_failed}
+     ]}
   end
 
   defp rejected_room(room, member) do
