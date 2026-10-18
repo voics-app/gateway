@@ -411,6 +411,11 @@ defmodule DiscordyGateway.Application.Session do
     %{state | seq: seq}
   end
 
+  # GUILD_CREATE is dispatched by the guild process when this session joins it (filtered to the
+  # channels the member can view, with voice states), so the raw event is only followed.
+  defp user_event(state, %EventEnvelope{type: "GUILD_CREATE", data: data}),
+    do: follow_membership(state, "GUILD_CREATE", data)
+
   defp user_event(state, %EventEnvelope{type: type, data: data}) do
     if Intents.allows?(state.identity.intents, type, :direct) do
       state = dispatch(state, type, Dispatch.encode(data))

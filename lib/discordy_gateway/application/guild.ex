@@ -159,12 +159,15 @@ defmodule DiscordyGateway.Application.Guild do
 
   ## Loading
 
-  defp load(id, nil) do
-    with {:ok, payload} <- Ports.api_client().fetch_guild_state(id),
-         do: {:ok, GuildState.from_payload(payload)}
+  # The api is the source of truth: events published before this process registered were routed
+  # to no one, so a seed (the GUILD_CREATE snapshot) may already be stale. It is only a fallback.
+  defp load(id, seed) do
+    case Ports.api_client().fetch_guild_state(id) do
+      {:ok, payload} -> {:ok, GuildState.from_payload(payload)}
+      {:error, _reason} when is_map(seed) -> {:ok, GuildState.from_payload(seed)}
+      {:error, reason} -> {:error, reason}
+    end
   end
-
-  defp load(_id, seed), do: {:ok, GuildState.from_payload(seed)}
 
   ## Subscribers
 
@@ -257,7 +260,7 @@ defmodule DiscordyGateway.Application.Guild do
     state.room
     |> Room.voice_states()
     |> Enum.filter(&(&1.channel_id in visible))
-    |> Enum.map(&VoiceStates.to_payload(&1, state.id))
+    |> Enum.map(&with_member(state, VoiceStates.to_payload(&1, state.id)))
   end
 
   defp presence_payloads(cache, sub) do
@@ -346,7 +349,7 @@ defmodule DiscordyGateway.Application.Guild do
       Dispatch.to_sessions(
         [sub.pid],
         "VOICE_STATE_UPDATE",
-        Room.rejected_payload(state.room, member, request)
+        with_member(state, Room.rejected_payload(state.room, member, request))
       )
 
       state
@@ -368,7 +371,21 @@ defmodule DiscordyGateway.Application.Guild do
   end
 
   defp broadcast_voice_state(state, payload, gate_channel_id),
-    do: fanout(state, "VOICE_STATE_UPDATE", payload, gate_channel_id, state.cache)
+    do:
+      fanout(
+        state,
+        "VOICE_STATE_UPDATE",
+        with_member(state, payload),
+        gate_channel_id,
+        state.cache
+      )
+
+  defp with_member(state, %{"user_id" => user_id} = payload) do
+    case Map.fetch(state.cache.members, user_id) do
+      {:ok, member} -> Map.put(payload, "member", member)
+      :error -> payload
+    end
+  end
 
   defp member(%Subscriber{} = sub),
     do: %{pid: sub.pid, user_id: sub.user_id, session_id: sub.session_id}
