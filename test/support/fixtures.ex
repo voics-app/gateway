@@ -6,15 +6,15 @@ defmodule DiscordyGateway.Fixtures do
   @send 1 <<< 11
   @connect 1 <<< 20
 
-  def guild_payload do
+  def guild_payload(guild_id \\ "100") do
     %{
-      "id" => "100",
+      "id" => guild_id,
       "name" => "Guild",
       "owner_id" => "1",
       "voice_region" => "eu-west",
       "roles" => [
         %{
-          "id" => "100",
+          "id" => guild_id,
           "name" => "@everyone",
           "permissions" => Integer.to_string(@view ||| @send ||| @connect)
         },
@@ -27,7 +27,7 @@ defmodule DiscordyGateway.Fixtures do
           "type" => 0,
           "name" => "staff",
           "permission_overwrites" => [
-            %{"id" => "100", "type" => 0, "allow" => "0", "deny" => Integer.to_string(@view)},
+            %{"id" => guild_id, "type" => 0, "allow" => "0", "deny" => Integer.to_string(@view)},
             %{"id" => "300", "type" => 0, "allow" => Integer.to_string(@view), "deny" => "0"}
           ]
         },

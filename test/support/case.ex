@@ -70,6 +70,77 @@ defmodule DiscordyGateway.Case do
     end
   end
 
+  @doc "A named client: a transport process that tags what its session sends and reports it to the test."
+  def client(name) do
+    test = self()
+
+    transport =
+      spawn_link(fn ->
+        forward = fn forward ->
+          receive do
+            {:gw_frame, frame} -> send(test, {:client, name, decode(frame)})
+            {:gw_close, code} -> send(test, {:closed, name, code})
+          end
+
+          forward.(forward)
+        end
+
+        forward.(forward)
+      end)
+
+    {:ok, session} = Session.start(transport)
+    %{name: name, transport: transport, session: session}
+  end
+
+  @doc "Connects a client for `user_id`, identifies, and waits for READY."
+  def online(user_id, extra \\ %{}) do
+    client = client(user_id)
+    identify(client.session, user_id, extra)
+    await(client, "READY")
+    client
+  end
+
+  @doc "Waits for a dispatch to `client`; returns its payload `d`, or `:none` on timeout."
+  def await(client, event, timeout \\ 500) do
+    name = client.name
+
+    receive do
+      {:client, ^name, %{"op" => 0, "t" => ^event, "d" => d}} -> d
+    after
+      timeout -> :none
+    end
+  end
+
+  @doc "Waits for the PRESENCE_UPDATE about `user_id` with `status`."
+  def await_presence(client, user_id, status, timeout \\ 500) do
+    case await(client, "PRESENCE_UPDATE", timeout) do
+      %{"user" => %{"id" => ^user_id}, "status" => ^status} = payload -> payload
+      :none -> :none
+      _other -> await_presence(client, user_id, status, timeout)
+    end
+  end
+
+  @doc "Waits for a non-dispatch frame with the given opcode."
+  def await_op(client, op, timeout \\ 500) do
+    name = client.name
+
+    receive do
+      {:client, ^name, %{"op" => ^op} = frame} -> frame
+    after
+      timeout -> :none
+    end
+  end
+
+  def await_close(client, timeout \\ 500) do
+    name = client.name
+
+    receive do
+      {:closed, ^name, code} -> code
+    after
+      timeout -> :none
+    end
+  end
+
   def voice_node(id, attrs \\ []) do
     struct!(
       VoiceNode,

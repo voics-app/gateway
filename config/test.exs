@@ -1,6 +1,6 @@
 import Config
 
-config :logger, :default_handler, formatter: {Logger.Formatter, []}
+config :logger, :default_handler, formatter: Logger.Formatter.new()
 config :logger, level: :warning
 config :opentelemetry, traces_exporter: :none
 
