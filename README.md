@@ -40,12 +40,17 @@ or run the image: `make docker && docker run --env-file .env -p 4000:4000 ghcr.i
 ```sh
 make test          # 248 unit and application tests, no external services
 make integration   # also runs the suites that start Valkey, etcd and Redpanda in Docker
+make test-kafka    # Kafka suite only, against a throwaway Redpanda (needs Docker, works on Windows)
 make lint          # format, warnings-as-errors, credo --strict, sobelow
 ```
 
-The Kafka integration suite needs the CRC32C NIF that brod uses, which only compiles where a C
-toolchain is available (Linux). On Windows run it in a container, with a broker already running
-and `KAFKA_TEST_PORT` set (see the moduledoc of `test/integration/kafka_test.exs`).
+`make test-kafka` (`scripts/test-kafka.sh`) starts a single-node Redpanda container
+(`gateway-redpanda`) on a dedicated network `gateway-kafka-net`, then runs
+`test/integration/kafka_test.exs` in a Linux `hexpm/elixir` container on that network with
+`KAFKA_TEST_HOST=redpanda` and `KAFKA_TEST_PORT=9092`. brod's CRC32C NIF needs a C toolchain, which
+the container installs (`build-base`, `cmake`). The broker and network are removed on exit. Dependency
+and build caches persist in the named volumes `gateway-kafka-deps` and `gateway-kafka-build`; remove
+them with `docker volume rm` to start clean. Override `ELIXIR_IMAGE` or `REDPANDA_IMAGE` to pin other tags.
 
 ## Configuration
 
@@ -74,11 +79,18 @@ reported at once. Names follow P2.
 | `CLUSTER_DNS_QUERY` | no | headless-service DNS name; enables libcluster DNS polling |
 | `PORT` | no (`4000`) | HTTP port |
 
-## Pending owner actions
+## Security
 
-- `mix hex.audit` reports GHSA-w4f7-4cxr-rv3c (CVE-2026-43966, medium) against `gun 2.7.0` and
-  `cowlib 2.21.0`, and no patched release exists yet. The gateway uses gun only as the etcd gRPC
-  client towards a trusted internal service. The reusable `elixir.yml` workflow runs
-  `mix hex.audit`, so CI fails until upstream publishes a fix or the owner decides to accept it.
-- The Kafka integration suite has not been run on Windows (see above); it runs in a Linux
-  container.
+**Accepted advisory: GHSA-w4f7-4cxr-rv3c (CVE-2026-43966, medium).** HTTP request/response splitting
+via non-VCHAR bytes in `cow_http_struct_hd:escape_string/2` (cowlib), affecting `gun 2.7.0` and
+`cowlib 2.21.0`. Hex has no patched release of either. Gun 2.1.0 (the version eetcd pins) is also
+listed, so downgrading does not help.
+
+- Risk assessment: the vulnerable function is reached only by cowlib's structured-field
+  *serializers* (`list/dictionary/item`, used for WebTransport protocol headers). Gun calls only the
+  response *parsers* (`parse_connection`, `parse_upgrade`, `parse_content_length`, ...), and the
+  gateway never builds structured headers from user input. Gun's reachable surface in the gateway is
+  the eetcd gRPC transport towards the internal etcd, and the WebSocket client in the tests.
+- Accepted in `mix.exs` with `hex: [ignore_advisories: ["GHSA-w4f7-4cxr-rv3c"]]`, so `mix hex.audit`
+  passes and only this advisory is ignored. Remove the entry as soon as Hex ships a patched gun or
+  cowlib (`mix hex.outdated gun`, `mix hex.info cowlib`).

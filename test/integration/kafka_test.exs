@@ -1,8 +1,9 @@
 defmodule DiscordyGateway.Integration.KafkaTest do
   @moduledoc """
   Needs a Kafka-compatible broker. By default it starts Redpanda in Docker; set `KAFKA_TEST_PORT`
-  to use a broker that is already running on 127.0.0.1 (topics created, advertised address
-  127.0.0.1:<port>), which is how the suite runs inside a Linux container, because the CRC32C
+  (and optionally `KAFKA_TEST_HOST`, default `127.0.0.1`) to use a broker that is already running,
+  with topics created and advertised address `<host>:<port>`. This is how `make test-kafka` runs
+  the suite inside a Linux container on the same Docker network as Redpanda, because the CRC32C
   NIF that brod needs is only compiled there.
   """
 
@@ -16,13 +17,17 @@ defmodule DiscordyGateway.Integration.KafkaTest do
   @image "docker.redpanda.com/redpandadata/redpanda:v25.3.17"
 
   setup_all do
-    port =
+    {host, port} =
       case System.get_env("KAFKA_TEST_PORT") do
-        nil -> start_redpanda()
-        value -> String.to_integer(value)
+        nil ->
+          {~c"127.0.0.1", start_redpanda()}
+
+        value ->
+          {String.to_charlist(System.get_env("KAFKA_TEST_HOST", "127.0.0.1")),
+           String.to_integer(value)}
       end
 
-    start_supervised!({Supervisor, brokers: [{~c"127.0.0.1", port}]})
+    start_supervised!({Supervisor, brokers: [{host, port}]})
     Process.sleep(8_000)
     :ok
   end

@@ -1,4 +1,4 @@
-.PHONY: dev test integration lint build docker
+.PHONY: dev test integration test-kafka lint build docker
 
 IMAGE ?= ghcr.io/discordy-voics/gateway:dev
 
@@ -12,6 +12,11 @@ test:
 # Needs Docker: starts throwaway Valkey, etcd and Redpanda containers on random ports.
 integration:
 	mix test --include integration
+
+# Runs the Kafka suite against a throwaway Redpanda; the suite runs in a Linux Elixir container
+# (brod's CRC32C NIF does not build on Windows). Needs Docker. See scripts/test-kafka.sh.
+test-kafka:
+	sh scripts/test-kafka.sh
 
 lint:
 	mix format --check-formatted
