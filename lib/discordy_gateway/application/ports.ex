@@ -26,6 +26,8 @@ defmodule DiscordyGateway.Application.Ports do
   def voice_token_signer, do: fetch(:voice_token_signer)
   @spec session_directory() :: module()
   def session_directory, do: fetch(:session_directory)
+  @spec turn_credentials() :: module()
+  def turn_credentials, do: fetch(:turn_credentials)
   @spec server_directory() :: module()
   def server_directory, do: fetch(:server_directory)
 
