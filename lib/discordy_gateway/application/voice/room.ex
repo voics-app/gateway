@@ -24,7 +24,13 @@ defmodule DiscordyGateway.Application.Voice.Room do
   @type t :: %__MODULE__{}
   @type effect :: tuple()
   @type member :: %{pid: pid(), user_id: String.t(), session_id: String.t()}
-  @type join_opts :: %{region: String.t(), e2ee: boolean()}
+  # `e2ee` is the channel or delivery-mode requirement. `whereis` maps a session id to its pid, so
+  # participants already in the call can be re-issued a token when the call becomes E2EE.
+  @type join_opts :: %{
+          region: String.t(),
+          e2ee: boolean(),
+          whereis: (String.t() -> pid() | nil)
+        }
 
   @spec new(String.t(), String.t() | nil) :: t()
   def new(server_id, guild_id), do: %__MODULE__{server_id: server_id, guild_id: guild_id}
@@ -67,22 +73,21 @@ defmodule DiscordyGateway.Application.Voice.Room do
   end
 
   @doc """
-  Reallocates after `node_id` disappeared from etcd and re-sends VOICE_SERVER_UPDATE.
-  `e2ee_for` maps a channel id to its media E2EE flag; `whereis` maps a session id to its pid.
+  Reallocates after `node_id` disappeared from etcd and re-sends VOICE_SERVER_UPDATE, each
+  participant keeping the E2EE flag of its token. `whereis` maps a session id to its pid.
   """
-  @spec node_gone(t(), String.t(), (String.t() -> boolean()), (String.t() -> pid() | nil)) ::
-          {t(), [effect()]}
-  def node_gone(%__MODULE__{node_id: node_id} = room, node_id, e2ee_for, whereis) do
+  @spec node_gone(t(), String.t(), (String.t() -> pid() | nil)) :: {t(), [effect()]}
+  def node_gone(%__MODULE__{node_id: node_id} = room, node_id, whereis) do
     Allocator.release(room.server_id, node_id)
     room = %{room | node_id: nil}
 
     case Allocator.allocate(room.server_id, room.region) do
-      {:ok, node} -> {%{room | node_id: node.node_id}, reissue(room, node, e2ee_for, whereis)}
+      {:ok, node} -> {%{room | node_id: node.node_id}, reissue(room, node, whereis)}
       {:error, _reason} -> {room, unavailable(room, whereis)}
     end
   end
 
-  def node_gone(room, _node_id, _e2ee_for, _whereis), do: {room, []}
+  def node_gone(room, _node_id, _whereis), do: {room, []}
 
   @doc "Stamps a Watch Together command with the server clock and relays it to the channel."
   @spec watch(t(), String.t(), map(), integer()) :: {t(), [effect()]} | :error
@@ -116,13 +121,18 @@ defmodule DiscordyGateway.Application.Voice.Room do
     case ensure_node(room, join_opts.region) do
       {:ok, room, node} ->
         room = leave_previous_channel(%{room | states: states}, previous, request.channel_id)
-        state = VoiceStates.get(states, member.user_id)
+
+        {states, e2ee, upgraded} =
+          settle_call_e2ee(room.states, member, request.channel_id, join_opts)
+
+        room = %{room | states: states}
 
         effects =
           [
             state_effect(room, states, member.user_id),
-            server_update(room, node, state, join_opts.e2ee, member.pid)
+            server_update(room, node, VoiceStates.get(states, member.user_id), e2ee, member.pid)
           ] ++
+            upgrade_effects(room, node, upgraded, join_opts.whereis) ++
             watch_catch_up(room, request.channel_id, member.pid)
 
         {room, effects}
@@ -130,6 +140,34 @@ defmodule DiscordyGateway.Application.Voice.Room do
       {:error, _reason} ->
         {rejected_room(room, member),
          [{:rejected, member.pid, rejected_payload(room, member, request)}]}
+    end
+  end
+
+  # A call is E2EE for everyone once the channel requires it, or the joiner or someone already in
+  # the channel has the account setting on, or someone already in it is encrypted. Participants
+  # who were not encrypted when the call became E2EE are returned in `upgraded`.
+  defp settle_call_e2ee(states, member, channel_id, join_opts) do
+    others =
+      states
+      |> VoiceStates.in_channel(channel_id)
+      |> Enum.reject(&(&1.user_id == member.user_id))
+
+    other_ids = Enum.map(others, & &1.user_id)
+    enabled = MapSet.new(Ports.call_defaults().enabled_user_ids([member.user_id | other_ids]))
+    setting_flags = Enum.map([member.user_id | other_ids], &MapSet.member?(enabled, &1))
+    encrypted_flags = Enum.map(others, & &1.e2ee)
+
+    e2ee = VoiceTokenClaims.call_e2ee?(join_opts.e2ee, setting_flags ++ encrypted_flags)
+    upgraded = if e2ee and not Enum.any?(others, & &1.e2ee), do: others, else: []
+
+    states = VoiceStates.set_e2ee(states, member.user_id, e2ee)
+    states = Enum.reduce(upgraded, states, &VoiceStates.set_e2ee(&2, &1.user_id, true))
+    {states, e2ee, upgraded}
+  end
+
+  defp upgrade_effects(room, node, upgraded, whereis) do
+    for state <- upgraded, pid = whereis.(state.session_id), is_pid(pid) do
+      server_update(room, node, state, true, pid)
     end
   end
 
@@ -202,9 +240,9 @@ defmodule DiscordyGateway.Application.Voice.Room do
      }}
   end
 
-  defp reissue(room, node, e2ee_for, whereis) do
+  defp reissue(room, node, whereis) do
     for state <- VoiceStates.all(room.states), pid = whereis.(state.session_id), is_pid(pid) do
-      server_update(room, node, state, e2ee_for.(state.channel_id), pid)
+      server_update(room, node, state, state.e2ee, pid)
     end
   end
 

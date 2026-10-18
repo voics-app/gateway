@@ -73,7 +73,8 @@ defmodule DiscordyGateway.Application.DmCall do
 
     opts = %{
       region: Settings.default_voice_region(),
-      e2ee: VoiceTokenClaims.e2ee_for(%{"delivery_mode" => state.delivery_mode})
+      e2ee: VoiceTokenClaims.e2ee_for(%{"delivery_mode" => state.delivery_mode}),
+      whereis: fn id -> Ports.session_directory().whereis(id) end
     }
 
     {room, effects} = Room.update(state.room, member, request, opts)
@@ -108,16 +109,8 @@ defmodule DiscordyGateway.Application.DmCall do
   end
 
   def handle_info({:voice_node_gone, node_id}, state) do
-    delivery_mode = state.delivery_mode
-
-    e2ee_for = fn _channel_id ->
-      VoiceTokenClaims.e2ee_for(%{"delivery_mode" => delivery_mode})
-    end
-
     {room, effects} =
-      Room.node_gone(state.room, node_id, e2ee_for, fn id ->
-        Ports.session_directory().whereis(id)
-      end)
+      Room.node_gone(state.room, node_id, fn id -> Ports.session_directory().whereis(id) end)
 
     Effects.run(effects, &broadcast(state, &1, &2))
     {:noreply, %{state | room: room}}

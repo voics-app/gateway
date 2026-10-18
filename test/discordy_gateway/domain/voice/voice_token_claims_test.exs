@@ -36,4 +36,12 @@ defmodule DiscordyGateway.Domain.Voice.VoiceTokenClaimsTest do
     assert VoiceTokenClaims.e2ee_for(%{"delivery_mode" => "standard", "e2ee" => true})
     refute VoiceTokenClaims.e2ee_for(%{})
   end
+
+  test "call_e2ee?/2 is on when the requirement or any participant flag is on" do
+    assert VoiceTokenClaims.call_e2ee?(true, [])
+    assert VoiceTokenClaims.call_e2ee?(false, [false, true])
+    assert VoiceTokenClaims.call_e2ee?(false, [true])
+    refute VoiceTokenClaims.call_e2ee?(false, [])
+    refute VoiceTokenClaims.call_e2ee?(false, [false, false])
+  end
 end

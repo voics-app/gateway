@@ -3,6 +3,7 @@ defmodule DiscordyGateway.Application.Events.Router do
   P6 routing of a consumed envelope. A guild id without targets goes to the guild process (which
   filters by VIEW_CHANNEL and intents); otherwise the event goes to every session of each
   targeted user. Interaction events go to the sessions of the target application's bot user.
+  A USER_SETTINGS_UPDATE also refreshes the user's `e2ee_calls_default` flag for voice joins.
   """
 
   alias DiscordyGateway.Application.{Guild, Ports}
@@ -11,13 +12,28 @@ defmodule DiscordyGateway.Application.Events.Router do
   @spec deliver(atom(), EventEnvelope.t()) :: :ok
   def deliver(:interaction, %EventEnvelope{} = envelope), do: deliver_interaction(envelope)
 
-  def deliver(_topic, %EventEnvelope{} = envelope) do
+  def deliver(_topic, %EventEnvelope{type: "USER_SETTINGS_UPDATE"} = envelope) do
+    remember_call_default(envelope)
+    deliver_routed(envelope)
+  end
+
+  def deliver(_topic, %EventEnvelope{} = envelope), do: deliver_routed(envelope)
+
+  defp deliver_routed(envelope) do
     case EventEnvelope.route(envelope) do
       {:users, user_ids} -> deliver_to_users(user_ids, envelope)
       {:guild, guild_id} -> deliver_to_guild(guild_id, envelope)
       :drop -> :ok
     end
   end
+
+  defp remember_call_default(%EventEnvelope{target_user_ids: [user_id | _]} = envelope) do
+    enabled = Map.get(envelope.data, "e2ee_calls_default") == true
+    _ = Ports.call_defaults().put(user_id, enabled)
+    :ok
+  end
+
+  defp remember_call_default(_envelope), do: :ok
 
   defp deliver_to_users(user_ids, envelope) do
     for user_id <- Enum.uniq(user_ids),

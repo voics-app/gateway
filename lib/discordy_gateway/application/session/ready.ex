@@ -24,6 +24,11 @@ defmodule DiscordyGateway.Application.Session.Ready do
     |> put_turn(identity)
   end
 
+  @doc "Whether the user has the `e2ee_calls_default` account setting on (every call is E2EE)."
+  @spec e2ee_calls_default?(map()) :: boolean()
+  def e2ee_calls_default?(ready),
+    do: get_in(ready, ["user_settings", "e2ee_calls_default"]) == true
+
   @doc "Ids of the guilds in the api response."
   @spec guild_ids(map()) :: [String.t()]
   def guild_ids(ready), do: for(%{"id" => id} <- List.wrap(ready["guilds"]), do: id)

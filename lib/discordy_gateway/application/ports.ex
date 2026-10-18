@@ -12,6 +12,8 @@ defmodule DiscordyGateway.Application.Ports do
   def resume_store, do: fetch(:resume_store)
   @spec presence_store() :: module()
   def presence_store, do: fetch(:presence_store)
+  @spec call_defaults() :: module()
+  def call_defaults, do: fetch(:call_defaults)
   @spec inbox_store() :: module()
   def inbox_store, do: fetch(:inbox_store)
   @spec event_publisher() :: module()

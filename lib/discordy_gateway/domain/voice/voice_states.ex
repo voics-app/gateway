@@ -1,5 +1,9 @@
 defmodule DiscordyGateway.Domain.Voice.VoiceStates do
-  @moduledoc "Voice states of one voice server scope (a guild, or a DM call): one per user."
+  @moduledoc """
+  Voice states of one voice server scope (a guild, or a DM call): one per user. `e2ee` records the
+  media E2EE flag the user's voice token was issued with, so later joins can tell whether the call
+  is already encrypted.
+  """
 
   defstruct states: %{}
 
@@ -10,7 +14,8 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStates do
           self_mute: boolean(),
           self_deaf: boolean(),
           self_video: boolean(),
-          self_stream: boolean()
+          self_stream: boolean(),
+          e2ee: boolean()
         }
   @type t :: %__MODULE__{states: %{String.t() => state()}}
   @type change :: :joined | :moved | :updated | :left | :noop
@@ -34,7 +39,8 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStates do
       self_mute: request.self_mute,
       self_deaf: request.self_deaf,
       self_video: request.self_video,
-      self_stream: request.self_stream
+      self_stream: request.self_stream,
+      e2ee: carried_e2ee(states, user_id)
     }
 
     change =
@@ -46,6 +52,19 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStates do
       end
 
     {change, %{vs | states: Map.put(states, user_id, state)}}
+  end
+
+  defp carried_e2ee(states, user_id) do
+    case Map.fetch(states, user_id) do
+      {:ok, %{e2ee: e2ee}} -> e2ee
+      :error -> false
+    end
+  end
+
+  @doc "Records the E2EE flag of the token issued to `user_id`."
+  @spec set_e2ee(t(), String.t(), boolean()) :: t()
+  def set_e2ee(%__MODULE__{states: states} = vs, user_id, e2ee) do
+    %{vs | states: Map.update!(states, user_id, &%{&1 | e2ee: e2ee})}
   end
 
   @doc "Removes every state owned by `session_id` (session ended)."
