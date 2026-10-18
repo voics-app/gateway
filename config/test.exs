@@ -25,7 +25,7 @@ config :discordy_gateway, :ports,
 config :discordy_gateway, :settings,
   default_voice_region: "nl-home",
   public_gateway_url: "ws://localhost:4000/gateway",
-  heartbeat_interval_ms: 200,
+  heartbeat_interval_ms: 1_000,
   resume_window_ms: 300,
   identify_timeout_ms: 300,
   guild_idle_ms: 200

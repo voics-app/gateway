@@ -7,7 +7,7 @@ defmodule DiscordyGateway.Application.SessionTest do
 
   test "sends HELLO with the heartbeat interval" do
     {_session, hello} = connect()
-    assert %{"op" => 10, "d" => %{"heartbeat_interval" => 200}} = hello
+    assert %{"op" => 10, "d" => %{"heartbeat_interval" => 1000}} = hello
   end
 
   test "IDENTIFY yields READY with seq 1, TURN credentials and the session id" do
@@ -85,7 +85,7 @@ defmodule DiscordyGateway.Application.SessionTest do
     {session, _} = connect()
     identify(session, "1")
     next_dispatch("READY")
-    assert_receive {:gw_close, 4009}, 1_000
+    assert_receive {:gw_close, 4009}, 4_000
     assert Process.alive?(session)
   end
 

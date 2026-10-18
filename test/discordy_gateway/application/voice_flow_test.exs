@@ -1,8 +1,8 @@
 defmodule DiscordyGateway.Application.VoiceFlowTest do
   use DiscordyGateway.Case, async: false
 
-  alias DiscordyGateway.Application.Voice.{DrainNode, NodeMonitor}
-  alias DiscordyGateway.Application.{Ports, Voice.Allocator}
+  alias DiscordyGateway.Application.Ports
+  alias DiscordyGateway.Application.Voice.{Allocator, DrainNode, NodeMonitor}
   alias DiscordyGateway.Fixtures
 
   defp setup_guild(gid) do

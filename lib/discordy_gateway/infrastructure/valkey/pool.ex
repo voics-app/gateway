@@ -8,6 +8,7 @@ defmodule DiscordyGateway.Infrastructure.Valkey.Pool do
 
   @size 4
   @counter :valkey_pool_counter
+  @names List.to_tuple(for index <- 0..(@size - 1), do: :"valkey_#{index}")
 
   def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -42,7 +43,7 @@ defmodule DiscordyGateway.Infrastructure.Valkey.Pool do
     name(rem(:counters.get(counter, 1), @size))
   end
 
-  defp name(index), do: :"valkey_#{index}"
+  defp name(index), do: elem(@names, index)
 
   defp stringify(command), do: Enum.map(command, &to_string/1)
 

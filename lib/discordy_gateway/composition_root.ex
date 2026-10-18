@@ -9,8 +9,8 @@ defmodule DiscordyGateway.CompositionRoot do
 
   alias DiscordyGateway.Application.Events.Deduplicator
   alias DiscordyGateway.Application.Relay.InboxSweeper
-  alias DiscordyGateway.Application.Voice.NodeMonitor
   alias DiscordyGateway.Application.UsageTicker
+  alias DiscordyGateway.Application.Voice.NodeMonitor
   alias DiscordyGateway.Infrastructure.Cluster.HordeServerDirectory
   alias DiscordyGateway.Infrastructure.Config
   alias DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory

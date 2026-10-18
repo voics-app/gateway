@@ -4,6 +4,7 @@ defmodule DiscordyGateway.Application.GuildFlowTest do
   import Bitwise
 
   alias DiscordyGateway.Application.Events.Ingest
+  alias DiscordyGateway.Application.Ports
   alias DiscordyGateway.Fixtures
 
   defp guild_with_bot(gid) do
@@ -244,7 +245,7 @@ defmodule DiscordyGateway.Application.GuildFlowTest do
       publish(:guild, "GUILD_DELETE", %{"id" => "g18"}, %{"guild_id" => "g18"})
       assert await(client, "GUILD_DELETE")
       Process.sleep(50)
-      assert :error = DiscordyGateway.Application.Ports.server_directory().lookup({:guild, "g18"})
+      assert :error = Ports.server_directory().lookup({:guild, "g18"})
     end
   end
 

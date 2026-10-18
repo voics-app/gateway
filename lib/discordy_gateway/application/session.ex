@@ -13,11 +13,10 @@ defmodule DiscordyGateway.Application.Session do
 
   use GenServer, restart: :temporary
 
-  alias DiscordyGateway.Application.{Dispatch, Guild, Ports, Settings}
+  alias DiscordyGateway.Application.{Dispatch, DmCall, Guild, Ids, Ports, Settings}
   alias DiscordyGateway.Application.Presence.Publisher
   alias DiscordyGateway.Application.Relay.{E2eeRelay, P2pRelay, TelemetryRelay}
   alias DiscordyGateway.Application.Session.{Authenticate, Identity, Ready, VoiceRouting}
-  alias DiscordyGateway.Application.{DmCall, Ids}
   alias DiscordyGateway.Contracts
   alias DiscordyGateway.Domain.Events.EventEnvelope
   alias DiscordyGateway.Domain.Intents

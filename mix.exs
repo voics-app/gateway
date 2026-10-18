@@ -52,7 +52,8 @@ defmodule DiscordyGateway.MixProject do
       {:opentelemetry_exporter, "~> 1.8"},
       {:gun, "~> 2.7", override: true},
       {:cowlib, "~> 2.21", override: true},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false}
     ]
   end
 

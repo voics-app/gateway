@@ -3,6 +3,7 @@ defmodule DiscordyGateway.Interface.RouterTest do
 
   import Plug.Test
 
+  alias DiscordyGateway.Application.Ports
   alias DiscordyGateway.Interface.Router
 
   defp call(method, path, headers \\ []) do
@@ -73,7 +74,7 @@ defmodule DiscordyGateway.Interface.RouterTest do
     assert %{status: 204} = call(:post, "/internal/v1/voice/nodes/n1/drain", internal())
     assert %{status: 204} = call(:post, "/internal/v1/voice/nodes/n1/undrain", internal())
     assert [{:drain, "n1"}, {:undrain, "n1"}] = Fakes.calls(:control)
-    assert MapSet.size(DiscordyGateway.Application.Ports.voice_allocations().drained()) == 0
+    assert MapSet.size(Ports.voice_allocations().drained()) == 0
   end
 
   test "unknown paths are 404" do

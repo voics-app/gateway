@@ -1,0 +1,13 @@
+[
+  verbose: false,
+  private: false,
+  skip: false,
+  router: "lib/discordy_gateway/interface/router.ex",
+  exit: "medium",
+  format: "txt",
+  out: "",
+  threshold: "medium",
+  ignore: ["Config.HTTPS"],
+  ignore_files: [],
+  version: false
+]

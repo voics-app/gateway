@@ -1,8 +1,9 @@
 defmodule DiscordyGateway.Application.RelayFlowTest do
   use DiscordyGateway.Case, async: false
 
+  alias DiscordyGateway.Application.Ports
   alias DiscordyGateway.Application.Relay.InboxSweeper
-  alias DiscordyGateway.Application.{Ports, UsageTicker}
+  alias DiscordyGateway.Application.UsageTicker
 
   defp access(channel, mode, users \\ ~w(2 3)) do
     for user <- users do

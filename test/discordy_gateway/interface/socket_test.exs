@@ -34,7 +34,7 @@ defmodule DiscordyGateway.Interface.SocketTest do
 
   test "completes HELLO, IDENTIFY and READY over a real WebSocket", %{conn: conn} do
     assert {:ok, stream} = upgrade(conn)
-    assert {:text, %{"op" => 10, "d" => %{"heartbeat_interval" => 200}}} = recv(conn)
+    assert {:text, %{"op" => 10, "d" => %{"heartbeat_interval" => 1000}}} = recv(conn)
 
     :gun.ws_send(
       conn,
