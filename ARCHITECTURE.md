@@ -1,0 +1,120 @@
+# Gateway architecture
+
+Clean Architecture: dependencies point inwards. `domain` is pure, `application` holds the
+processes and use cases and talks to the outside only through ports, `infrastructure` implements
+the ports, `interface` is HTTP and WebSocket. The composition root binds ports to adapters
+(`config/config.exs`) and starts the tree; tests rebind the ports to in-memory fakes.
+
+```
+lib/discordy_gateway/
+  contracts.ex          pinned constants (opcodes, close codes, intents, permissions, topics, keys)
+  domain/               codec, intents, permissions, guild cache, fan-out plan, presence aggregation,
+                        resume replay, rate limiter, dedup LRU, voice states and node selection,
+                        relay rules
+  application/          Session, Guild, DmCall, Voice.{Room,Allocator,NodeMonitor,DrainNode},
+                        Events.{Ingest,Router,Deduplicator}, Presence.Publisher,
+                        Relay.{E2eeRelay,P2pRelay,TelemetryRelay,InboxSweeper}, Stats, UsageTicker,
+                        ports/ (behaviours)
+  infrastructure/       Valkey, etcd, Kafka (brod), HTTP api client, JWT/HS256/TURN, :pg, Horde, config
+  interface/            Endpoint, Router, Socket (WebSock), health, metrics, internal auth
+  composition_root.ex   OTP application
+```
+
+## C4 component diagram
+
+```mermaid
+flowchart LR
+  client([Client / bot]) -- "WSS /gateway (P7)" --> socket
+  admin([admin-bff]) -- "HTTP /internal/v1" --> router
+  prom([Prometheus]) -- "/metrics" --> router
+
+  subgraph gateway [Gateway node]
+    subgraph interface
+      router[Router and Endpoint]
+      socket[Socket transport]
+    end
+    subgraph application
+      session[Session\nprocess per connection]
+      guild[Guild\nsingleton per guild]
+      dmcall[DmCall\nsingleton per DM call]
+      ingest[Events.Ingest and Router]
+      presence[Presence.Publisher]
+      relay[E2eeRelay / P2pRelay / TelemetryRelay]
+      voice[Voice.Room / Allocator / NodeMonitor]
+      ports{{Ports}}
+    end
+    subgraph domain
+      dom[Codec, Permissions, Fanout, GuildState,\nPresence, ResumeReplay, VoiceNode, Relay rules]
+    end
+    subgraph infrastructure
+      adapters[Adapters: Valkey, etcd, Kafka, HTTP, JWT, :pg, Horde]
+    end
+  end
+
+  router --> ports
+  socket --> session
+  session --> guild
+  session --> dmcall
+  session --> relay
+  session --> presence
+  ingest --> guild
+  ingest --> session
+  guild --> voice
+  dmcall --> voice
+  application --> domain
+  ports --> adapters
+
+  adapters --> valkey[(Valkey)]
+  adapters --> etcd[(etcd)]
+  adapters --> redpanda[(Redpanda)]
+  adapters --> api[api service]
+  voicenode([Voice nodes]) -. "lease in etcd" .-> etcd
+```
+
+## Processes
+
+- **Session** (`DynamicSupervisor`, one per connection, `:temporary`). The WebSocket process is a
+  transport only; it forwards parsed frames and writes the `{:gw_frame, _}` and `{:gw_close, _}`
+  messages the session sends back. The session survives a dropped socket for 120 s. Every
+  dispatch is numbered and appended to the Valkey list `gw:resume:<id>` (capped at 1000);
+  RESUME from a new connection starts a short-lived stub session that calls the original
+  session (`{:resume, ...}`, cluster-wide through `:pg`), which re-attaches the new transport,
+  replays the missed frames and then sends RESUMED. The stub forwards later frames to it.
+- **Guild** (Horde registry, one per guild in the cluster). Holds the `GuildState` cache,
+  subscribers (monitored), voice `Room`, and idles out five minutes after the last subscriber
+  leaves. Sessions monitor it and re-join if it crashes.
+- **DmCall**: the same voice role for DM channels, started on the first join, stopped when the
+  call empties.
+- **Events**: one brod group subscriber per topic, shared by all nodes (`discordy-gateway.<topic>`),
+  so each record is processed once cluster-wide and routed through the cluster-wide directories.
+  `Deduplicator` makes routing idempotent on the envelope id.
+- **Voice.NodeMonitor** diffs the etcd view every two seconds and tells every local guild and
+  call process when a node vanished, so they reallocate and re-send `VOICE_SERVER_UPDATE`.
+- **InboxSweeper** and **UsageTicker** run every minute.
+
+## Event routing (P6)
+
+`target_user_ids` present: every session of those users gets the event (bots only if their
+intents allow it in a DM context). Otherwise `guild_id` present: the guild process fans out to
+members that pass the intents check and, for channel events, VIEW_CHANNEL on the channel
+(threads inherit their parent's overwrites). Bots without MESSAGE_CONTENT receive stripped
+message events unless they are the author or are mentioned. `GUILD_MEMBER_ADD` also makes the
+new member's online sessions join the guild; `GUILD_MEMBER_REMOVE` and `GUILD_DELETE` tell the
+affected sessions with `GUILD_DELETE`. `INTERACTION_CREATE` goes to the sessions of the
+application's bot user.
+
+## Voice (P8)
+
+The guild (or DM call) process owns the voice states of its scope. On join it needs a node:
+the allocation in Valkey `voice:alloc:<id>` is reused while its node is registered in etcd,
+otherwise the least-loaded non-draining node of the region is claimed with `SET NX`, so
+concurrent joiners agree. The token is an HS256 JWT valid for 60 seconds with
+`sub, sid, srv, chn, node, e2ee`. Drain marks a node in Valkey (gateway side) and etcd
+(`/discordy/voice/drain/<node_id>`, for the node itself).
+
+## Data and guarantees
+
+Valkey holds resume buffers, presence, voice allocations and the E2EE inbox
+(`e2ee:inbox:<device>` streams, `e2ee:idx:<device>` message index, `e2ee:ttl` expiry set).
+Ciphertext is deleted on ACK and after seven days at the latest; nothing ephemeral is written
+to Postgres or ScyllaDB. P2P signals are never stored.
