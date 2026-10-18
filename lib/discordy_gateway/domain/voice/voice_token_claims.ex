@@ -30,4 +30,12 @@ defmodule DiscordyGateway.Domain.Voice.VoiceTokenClaims do
   @spec e2ee_for(map()) :: boolean()
   def e2ee_for(%{"delivery_mode" => mode}) when mode in ["ephemeral", "p2p"], do: true
   def e2ee_for(channel), do: Map.get(channel, "e2ee") == true
+
+  @doc """
+  Whether a call is E2EE for everyone. `required` is the channel or delivery-mode requirement;
+  `flags` holds one entry per relevant account setting or participant already encrypted. A single
+  `true` makes the whole call E2EE (voice#8).
+  """
+  @spec call_e2ee?(boolean(), [boolean()]) :: boolean()
+  def call_e2ee?(required, flags), do: required or Enum.any?(flags)
 end

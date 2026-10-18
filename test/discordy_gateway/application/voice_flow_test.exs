@@ -225,6 +225,70 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
     assert %{"channel_id" => nil, "user_id" => "2"} = await_left(bob)
   end
 
+  describe "account e2ee_calls_default (voice#8)" do
+    defp ready_with_setting(gid, user, enabled) do
+      {:ok,
+       %{
+         "user" => %{"id" => user},
+         "guilds" => [Fixtures.guild_payload(gid)],
+         "private_channels" => [],
+         "relationships" => [],
+         "user_settings" => %{"e2ee_calls_default" => enabled}
+       }}
+    end
+
+    test "a participant's setting makes the whole call E2EE, re-issuing tokens to those already in" do
+      setup_guild("e1")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+
+      bob = online_in("e1", "3")
+      alice = online_in("e1", "2")
+      Fakes.put({:call_default, "2"}, true)
+
+      join(bob, "e1", "12")
+      assert %{"token" => "voice-token:3:a:false"} = await(bob, "VOICE_SERVER_UPDATE")
+
+      join(alice, "e1", "12")
+      assert %{"token" => "voice-token:2:a:true"} = await(alice, "VOICE_SERVER_UPDATE")
+      assert %{"token" => "voice-token:3:a:true"} = await(bob, "VOICE_SERVER_UPDATE")
+    end
+
+    test "a joiner without the setting is still encrypted when the call already is" do
+      setup_guild("e2")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+
+      alice = online_in("e2", "2")
+      carol = online_in("e2", "1")
+      Fakes.put({:call_default, "2"}, true)
+
+      join(alice, "e2", "12")
+      assert %{"token" => "voice-token:2:a:true"} = await(alice, "VOICE_SERVER_UPDATE")
+
+      join(carol, "e2", "12")
+      assert %{"token" => "voice-token:1:a:true"} = await(carol, "VOICE_SERVER_UPDATE")
+    end
+
+    test "READY with the setting on encrypts the user's own calls" do
+      Fakes.put({:ready, "2"}, ready_with_setting("e3", "2", true))
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+
+      alice = online_in("e3", "2")
+      join(alice, "e3", "12")
+
+      assert %{"token" => "voice-token:2:a:true"} = await(alice, "VOICE_SERVER_UPDATE")
+    end
+
+    test "calls stay standard when nobody in them has the setting" do
+      setup_guild("e4")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+
+      alice = online_in("e4", "2")
+      join(alice, "e4", "12")
+
+      assert %{"token" => "voice-token:2:a:false"} = await(alice, "VOICE_SERVER_UPDATE")
+    end
+  end
+
   describe "DM calls" do
     defp dm_access(channel, mode \\ "standard") do
       for user <- ~w(2 3) do

@@ -309,6 +309,7 @@ defmodule DiscordyGateway.Application.Session do
         guild_ids: MapSet.new(Ready.guild_ids(ready))
     }
 
+    :ok = Ports.call_defaults().put(identity.user_id, Ready.e2ee_calls_default?(ready))
     state = dispatch(state, "READY", Dispatch.encode(Ready.payload(identity, state.id, ready)))
     state = join_guilds(state, List.wrap(ready["guilds"]))
     replay_inbox(state)

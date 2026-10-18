@@ -144,12 +144,8 @@ defmodule DiscordyGateway.Application.Guild do
   def handle_info(:idle_check, state), do: {:noreply, state}
 
   def handle_info({:voice_node_gone, node_id}, state) do
-    e2ee_for = &VoiceTokenClaims.e2ee_for(GuildState.channel(state.cache, &1) || %{})
-
     {room, effects} =
-      Room.node_gone(state.room, node_id, e2ee_for, fn id ->
-        Ports.session_directory().whereis(id)
-      end)
+      Room.node_gone(state.room, node_id, fn id -> Ports.session_directory().whereis(id) end)
 
     Effects.run(effects, &broadcast_voice_state(state, &1, &2))
     {:noreply, %{state | room: room}}
@@ -341,7 +337,8 @@ defmodule DiscordyGateway.Application.Guild do
       opts = %{
         region:
           GuildState.voice_region_for(state.cache, channel_id, Settings.default_voice_region()),
-        e2ee: VoiceTokenClaims.e2ee_for(channel)
+        e2ee: VoiceTokenClaims.e2ee_for(channel),
+        whereis: fn id -> Ports.session_directory().whereis(id) end
       }
 
       apply_voice(state, sub, request, opts)

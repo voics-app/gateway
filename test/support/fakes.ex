@@ -301,3 +301,20 @@ defmodule DiscordyGateway.Fakes.TurnCredentials do
       ttl: 3600
     }
 end
+
+defmodule DiscordyGateway.Fakes.CallDefaults do
+  @moduledoc false
+  @behaviour DiscordyGateway.Application.Ports.CallDefaults
+
+  alias DiscordyGateway.Fakes
+
+  @impl true
+  def put(user_id, enabled) do
+    Fakes.put({:call_default, user_id}, enabled)
+    :ok
+  end
+
+  @impl true
+  def enabled_user_ids(user_ids),
+    do: Enum.filter(user_ids, &Fakes.get({:call_default, &1}, false))
+end

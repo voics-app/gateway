@@ -78,4 +78,13 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStatesTest do
     assert left["channel_id"] == nil
     assert left["user_id"] == "u1"
   end
+
+  test "the E2EE flag is recorded per user and survives updates in the same channel" do
+    {_, states} = VoiceStates.update(fresh(), "u1", "s1", req("c1"))
+    assert VoiceStates.get(states, "u1").e2ee == false
+
+    states = VoiceStates.set_e2ee(states, "u1", true)
+    assert {:updated, states} = VoiceStates.update(states, "u1", "s1", req("c1", self_mute: true))
+    assert VoiceStates.get(states, "u1").e2ee == true
+  end
 end
