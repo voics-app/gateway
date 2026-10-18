@@ -315,6 +315,16 @@ defmodule DiscordyGateway.Fakes.CallDefaults do
   end
 
   @impl true
-  def enabled_user_ids(user_ids),
-    do: Enum.filter(user_ids, &Fakes.get({:call_default, &1}, false))
+  def enabled_user_ids(user_ids) do
+    Fakes.record(:call_defaults, user_ids)
+
+    case Fakes.get(:call_defaults_failures, 0) do
+      failures when failures > 0 ->
+        Fakes.put(:call_defaults_failures, failures - 1)
+        {:error, :unavailable}
+
+      _healthy ->
+        {:ok, Enum.filter(user_ids, &Fakes.get({:call_default, &1}, false))}
+    end
+  end
 end

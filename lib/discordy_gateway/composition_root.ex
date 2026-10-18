@@ -44,7 +44,8 @@ defmodule DiscordyGateway.CompositionRoot do
   def bind(config) do
     put(:settings,
       default_voice_region: config.default_voice_region,
-      public_gateway_url: config.public_gateway_url
+      public_gateway_url: config.public_gateway_url,
+      e2ee_settings_unavailable_policy: config.e2ee_settings_unavailable_policy
     )
 
     put(:auth,

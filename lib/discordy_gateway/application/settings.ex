@@ -25,6 +25,18 @@ defmodule DiscordyGateway.Application.Settings do
   @spec guild_idle_ms() :: pos_integer()
   def guild_idle_ms, do: get(:guild_idle_ms, 300_000)
 
+  @doc "What a voice join does when the participants' `e2ee_calls_default` cannot be read."
+  @spec e2ee_settings_unavailable_policy() :: :open | :closed | :wait
+  def e2ee_settings_unavailable_policy, do: get(:e2ee_settings_unavailable_policy, :open)
+
+  @doc "Reads attempted before giving up under the `wait` policy."
+  @spec e2ee_settings_wait_attempts() :: pos_integer()
+  def e2ee_settings_wait_attempts, do: get(:e2ee_settings_wait_attempts, 3)
+
+  @doc "Pause between two reads under the `wait` policy."
+  @spec e2ee_settings_wait_interval_ms() :: non_neg_integer()
+  def e2ee_settings_wait_interval_ms, do: get(:e2ee_settings_wait_interval_ms, 1_000)
+
   defp fetch(key),
     do: :discordy_gateway |> Application.fetch_env!(:settings) |> Keyword.fetch!(key)
 

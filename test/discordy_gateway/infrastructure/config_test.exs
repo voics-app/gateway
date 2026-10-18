@@ -44,6 +44,23 @@ defmodule DiscordyGateway.Infrastructure.ConfigTest do
     assert config.cluster_dns_query == nil
   end
 
+  test "E2EE_SETTINGS_UNAVAILABLE_POLICY defaults to open and accepts open, closed and wait" do
+    assert {:ok, config} = Config.parse(valid_env())
+    assert config.e2ee_settings_unavailable_policy == :open
+
+    for {value, policy} <- [{"open", :open}, {"closed", :closed}, {"wait", :wait}] do
+      env = Map.put(valid_env(), "E2EE_SETTINGS_UNAVAILABLE_POLICY", value)
+      assert {:ok, %{e2ee_settings_unavailable_policy: ^policy}} = Config.parse(env)
+    end
+  end
+
+  test "rejects an unknown E2EE_SETTINGS_UNAVAILABLE_POLICY" do
+    env = Map.put(valid_env(), "E2EE_SETTINGS_UNAVAILABLE_POLICY", "maybe")
+
+    assert {:error, errors} = Config.parse(env)
+    assert "E2EE_SETTINGS_UNAVAILABLE_POLICY must be one of open, closed, wait" in errors
+  end
+
   test "reports every problem at once" do
     assert {:error, errors} =
              Config.parse(%{

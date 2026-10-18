@@ -5,5 +5,6 @@ defmodule DiscordyGateway.Application.Ports.CallDefaults do
   """
 
   @callback put(user_id :: String.t(), enabled :: boolean()) :: :ok | {:error, term()}
-  @callback enabled_user_ids([String.t()]) :: [String.t()]
+  @doc "The users among `user_ids` with the setting on; `{:error, _}` when the store is unreachable."
+  @callback enabled_user_ids([String.t()]) :: {:ok, [String.t()]} | {:error, term()}
 end

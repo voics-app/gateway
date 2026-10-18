@@ -6,8 +6,6 @@ defmodule DiscordyGateway.Infrastructure.Valkey.CallDefaultsStore do
 
   @behaviour DiscordyGateway.Application.Ports.CallDefaults
 
-  require Logger
-
   alias DiscordyGateway.Infrastructure.Valkey.Pool
 
   @key "voice:e2ee_default"
@@ -21,19 +19,12 @@ defmodule DiscordyGateway.Infrastructure.Valkey.CallDefaultsStore do
   end
 
   @impl true
-  def enabled_user_ids([]), do: []
+  def enabled_user_ids([]), do: {:ok, []}
 
   def enabled_user_ids(user_ids) do
     case Pool.command(["HMGET", @key | user_ids]) do
-      {:ok, values} ->
-        for {user_id, "1"} <- Enum.zip(user_ids, values), do: user_id
-
-      {:error, reason} ->
-        Logger.warning(
-          "call defaults unavailable, treating participants as not opted in: #{inspect(reason)}"
-        )
-
-        []
+      {:ok, values} -> {:ok, for({user_id, "1"} <- Enum.zip(user_ids, values), do: user_id)}
+      {:error, reason} -> {:error, reason}
     end
   end
 end

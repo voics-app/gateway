@@ -289,6 +289,76 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
     end
   end
 
+  describe "E2EE_SETTINGS_UNAVAILABLE_POLICY when the call settings cannot be read" do
+    setup do
+      previous = Application.get_env(:discordy_gateway, :settings)
+      on_exit(fn -> Application.put_env(:discordy_gateway, :settings, previous) end)
+      :ok
+    end
+
+    defp set_policy(policy) do
+      settings =
+        :discordy_gateway
+        |> Application.get_env(:settings)
+        |> Keyword.put(:e2ee_settings_unavailable_policy, policy)
+
+      Application.put_env(:discordy_gateway, :settings, settings)
+    end
+
+    test "open lets the join proceed unencrypted" do
+      setup_guild("p1")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+      set_policy(:open)
+      Fakes.put(:call_defaults_failures, 99)
+
+      alice = online_in("p1", "2")
+      join(alice, "p1", "12")
+
+      assert %{"token" => "voice-token:2:a:false"} = await(alice, "VOICE_SERVER_UPDATE")
+    end
+
+    test "closed encrypts the call" do
+      setup_guild("p2")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+      set_policy(:closed)
+      Fakes.put(:call_defaults_failures, 99)
+
+      alice = online_in("p2", "2")
+      join(alice, "p2", "12")
+
+      assert %{"token" => "voice-token:2:a:true"} = await(alice, "VOICE_SERVER_UPDATE")
+    end
+
+    test "wait retries and joins once the settings are readable again" do
+      setup_guild("p3")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+      set_policy(:wait)
+      alice = online_in("p3", "2")
+      Fakes.put({:call_default, "2"}, true)
+      Fakes.put(:call_defaults_failures, 2)
+      join(alice, "p3", "12")
+
+      assert %{"token" => "voice-token:2:a:true"} = await(alice, "VOICE_SERVER_UPDATE")
+    end
+
+    test "wait refuses the join with a VOICE_JOIN_FAILED error when the settings stay unreadable" do
+      setup_guild("p4")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+      set_policy(:wait)
+      Fakes.put(:call_defaults_failures, 99)
+
+      alice = online_in("p4", "2")
+      join(alice, "p4", "12")
+
+      assert %{"error" => "e2ee_settings_unavailable", "channel_id" => "12"} =
+               await(alice, "VOICE_JOIN_FAILED")
+
+      assert %{"channel_id" => nil, "user_id" => "2"} = await_left(alice)
+      assert :none = await(alice, "VOICE_SERVER_UPDATE", 100)
+      assert length(Fakes.calls(:call_defaults)) == 3
+    end
+  end
+
   describe "DM calls" do
     defp dm_access(channel, mode \\ "standard") do
       for user <- ~w(2 3) do

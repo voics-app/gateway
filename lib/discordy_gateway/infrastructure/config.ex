@@ -8,6 +8,7 @@ defmodule DiscordyGateway.Infrastructure.Config do
 
   @snowflake_range 128..191
   @log_levels ~w(debug info notice warning error)
+  @e2ee_policies %{"open" => :open, "closed" => :closed, "wait" => :wait}
 
   @type t :: map()
 
@@ -32,6 +33,7 @@ defmodule DiscordyGateway.Infrastructure.Config do
       {:public_gateway_url, url(env, "PUBLIC_GATEWAY_URL", ~w(ws wss http https))},
       {:default_voice_region,
        {:ok, env["DEFAULT_VOICE_REGION"] |> blank_to_nil() |> Kernel.||("nl-home")}},
+      {:e2ee_settings_unavailable_policy, e2ee_settings_policy(env)},
       {:cluster_dns_query, {:ok, blank_to_nil(env["CLUSTER_DNS_QUERY"])}},
       {:port, port(env)}
     ]
@@ -64,6 +66,12 @@ defmodule DiscordyGateway.Infrastructure.Config do
     if value in allowed,
       do: {:ok, value},
       else: {:error, "#{name} must be one of #{Enum.join(allowed, ", ")}"}
+  end
+
+  defp e2ee_settings_policy(env) do
+    with {:ok, value} <-
+           one_of(env, "E2EE_SETTINGS_UNAVAILABLE_POLICY", ~w(open closed wait), "open"),
+         do: {:ok, Map.fetch!(@e2ee_policies, value)}
   end
 
   defp public_key(env) do
