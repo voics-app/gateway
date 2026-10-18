@@ -68,7 +68,7 @@ defmodule DiscordyGateway.Infrastructure.Config do
 
   defp public_key(env) do
     with {:ok, pem} <- required(env, "JWT_PUBLIC_KEY"),
-         {:ok, key} <- JwtVerifier.parse_public_key(String.replace(pem, "\\n", "\n")) do
+         {:ok, key} <- JwtVerifier.parse_public_key(normalize_pem(pem)) do
       {:ok, key}
     else
       {:error, :invalid_public_key} ->
@@ -77,6 +77,12 @@ defmodule DiscordyGateway.Infrastructure.Config do
       {:error, message} ->
         {:error, message}
     end
+  end
+
+  # Env files and orchestrators differ in how they carry a multi-line PEM: surrounding quotes
+  # and literal `\n` escapes are both accepted.
+  defp normalize_pem(pem) do
+    pem |> String.trim() |> String.trim("\"") |> String.trim("'") |> String.replace("\\n", "\n")
   end
 
   defp snowflake(env) do
