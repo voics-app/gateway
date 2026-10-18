@@ -13,7 +13,11 @@ defmodule DiscordyGateway.MixProject do
       deps: deps(),
       aliases: aliases(),
       releases: releases(),
-      test_coverage: [summary: [threshold: 0]]
+      test_coverage: [summary: [threshold: 0]],
+      # GHSA-w4f7-4cxr-rv3c (CVE-2026-43966) has no patched gun or cowlib on Hex. The vulnerable
+      # serializer (cow_http_struct_hd:escape_string/2) is not called by gun, which the gateway
+      # uses only as eetcd's gRPC transport towards etcd and in tests. See README "Security".
+      hex: [ignore_advisories: ["GHSA-w4f7-4cxr-rv3c"]]
     ]
   end
 
