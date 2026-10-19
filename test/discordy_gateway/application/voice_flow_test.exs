@@ -313,7 +313,10 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
       await(bob, "VOICE_STATE_UPDATE")
 
       moderate("m3", "2", "10")
-      assert await(bob, "VOICE_STATE_UPDATE", 100) == :none
+      # A late echo of the join may still arrive; what must not arrive is a move to channel 10.
+      refute_receive {:client, "3",
+                      %{"t" => "VOICE_STATE_UPDATE", "d" => %{"channel_id" => "10"}}},
+                     150
     end
   end
 
