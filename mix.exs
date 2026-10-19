@@ -1,0 +1,79 @@
+defmodule DiscordyGateway.MixProject do
+  use Mix.Project
+
+  @version "0.1.0"
+
+  def project do
+    [
+      app: :discordy_gateway,
+      version: @version,
+      elixir: "~> 1.18",
+      elixirc_paths: elixirc_paths(Mix.env()),
+      start_permanent: Mix.env() == :prod,
+      deps: deps(),
+      aliases: aliases(),
+      releases: releases(),
+      test_coverage: [summary: [threshold: 0]],
+      # GHSA-w4f7-4cxr-rv3c (CVE-2026-43966) has no patched gun or cowlib on Hex. The vulnerable
+      # serializer (cow_http_struct_hd:escape_string/2) is not called by gun, which the gateway
+      # uses only as eetcd's gRPC transport towards etcd and in tests. See README "Security".
+      hex: [ignore_advisories: ["GHSA-w4f7-4cxr-rv3c"]]
+    ]
+  end
+
+  def application do
+    [
+      mod: {DiscordyGateway.CompositionRoot, []},
+      extra_applications: [:logger, :runtime_tools, :crypto, :public_key]
+    ]
+  end
+
+  def cli do
+    [preferred_envs: [precommit: :test]]
+  end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
+  defp deps do
+    [
+      {:phoenix, "~> 1.8.1"},
+      {:bandit, "~> 1.8"},
+      {:websock_adapter, "~> 0.5"},
+      {:jason, "~> 1.4"},
+      {:redix, "~> 1.5"},
+      {:brod, "~> 4.4"},
+      {:eetcd, "~> 0.6"},
+      {:libcluster, "~> 3.5"},
+      {:horde, "~> 0.9"},
+      {:req, "~> 0.5"},
+      {:logger_json, "~> 7.0"},
+      {:telemetry_metrics, "~> 1.1"},
+      {:telemetry_poller, "~> 1.3"},
+      {:telemetry_metrics_prometheus_core, "~> 1.2"},
+      {:opentelemetry, "~> 1.5"},
+      {:opentelemetry_api, "~> 1.4"},
+      {:opentelemetry_exporter, "~> 1.8"},
+      {:gun, "~> 2.7", override: true},
+      {:cowlib, "~> 2.21", override: true},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false}
+    ]
+  end
+
+  defp aliases do
+    [
+      lint: ["format --check-formatted", "credo --strict"],
+      precommit: ["compile --warnings-as-errors", "format", "credo --strict", "test"]
+    ]
+  end
+
+  defp releases do
+    [
+      discordy_gateway: [
+        include_executables_for: [:unix],
+        applications: [opentelemetry: :temporary]
+      ]
+    ]
+  end
+end
