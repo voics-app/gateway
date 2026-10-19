@@ -275,6 +275,10 @@ defmodule DiscordyGateway.Application.Guild do
 
   ## Events
 
+  # Bus-only (api#24): a moderator moved or disconnected a member. Never fanned out to clients.
+  defp handle_event(%EventEnvelope{type: "VOICE_MEMBER_MOVE", data: data}, state),
+    do: {:noreply, move_member(state, data["user_id"], data["channel_id"])}
+
   defp handle_event(%EventEnvelope{type: type, data: data} = envelope, state) do
     updated = GuildState.apply_event(state.cache, type, data)
     plan_cache = if type in @remove_events, do: state.cache, else: updated
@@ -332,16 +336,7 @@ defmodule DiscordyGateway.Application.Guild do
 
     if GuildState.voice_channel?(state.cache, channel_id) and
          Permissions.has?(permissions, :connect) do
-      channel = GuildState.channel(state.cache, channel_id)
-
-      opts = %{
-        region:
-          GuildState.voice_region_for(state.cache, channel_id, Settings.default_voice_region()),
-        e2ee: VoiceTokenClaims.e2ee_for(channel),
-        whereis: fn id -> Ports.session_directory().whereis(id) end
-      }
-
-      apply_voice(state, sub, request, opts)
+      apply_voice(state, sub, request, join_opts(state, channel_id))
     else
       Dispatch.to_sessions(
         [sub.pid],
@@ -351,6 +346,48 @@ defmodule DiscordyGateway.Application.Guild do
 
       state
     end
+  end
+
+  defp join_opts(state, channel_id) do
+    %{
+      region: GuildState.voice_region_for(state.cache, channel_id, Settings.default_voice_region()),
+      e2ee: VoiceTokenClaims.e2ee_for(GuildState.channel(state.cache, channel_id)),
+      whereis: fn id -> Ports.session_directory().whereis(id) end
+    }
+  end
+
+  # The api already checked the moderator's permissions, so the member's own CONNECT is not
+  # re-checked (as in Discord). A user who is not in voice, or a target that is not a voice
+  # channel of this guild, is ignored. A move re-uses the Room join path, which broadcasts the new
+  # state and sends the member a VOICE_SERVER_UPDATE (token for the new channel); a disconnect
+  # broadcasts channel_id null, which the member's client treats as leaving voice.
+  defp move_member(state, user_id, target) do
+    with %{} = current <- VoiceStates.get(state.room.states, user_id),
+         {:ok, sub} <- subscriber_by_session(state, current.session_id),
+         true <- target == nil or GuildState.voice_channel?(state.cache, target),
+         true <- target != current.channel_id do
+      request = %{
+        guild_id: state.id,
+        channel_id: target,
+        self_mute: current.self_mute,
+        self_deaf: current.self_deaf,
+        self_video: current.self_video,
+        self_stream: current.self_stream
+      }
+
+      opts = if target, do: join_opts(state, target), else: nil
+      apply_voice(state, sub, request, opts)
+    else
+      _ -> state
+    end
+  end
+
+  defp subscriber_by_session(state, session_id) do
+    state.subs
+    |> Map.values()
+    |> Enum.find_value(:error, fn %{sub: sub} ->
+      if sub.session_id == session_id, do: {:ok, sub}
+    end)
   end
 
   defp apply_voice(state, sub, request, opts) do
