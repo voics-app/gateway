@@ -420,5 +420,91 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
 
       assert %{"channel_id" => nil} = await(outsider, "VOICE_STATE_UPDATE")
     end
+
+    defp dm_voice(client, channel_id) do
+      send_frame(client.session, 4, %{
+        "guild_id" => nil,
+        "channel_id" => channel_id,
+        "self_mute" => false,
+        "self_deaf" => false
+      })
+    end
+
+    defp dm_ring_setup(channel) do
+      dm_access(channel)
+      Fakes.put(:voice_nodes, [voice_node("a")])
+      {online("2"), online("3")}
+    end
+
+    # Client names are user ids, so a session left over from an earlier test can deliver a call for
+    # another channel; only the call of `channel_id` counts.
+    defp await_call(client, channel_id, event, timeout \\ 500) do
+      case await(client, event, timeout) do
+        %{"channel_id" => ^channel_id} = call -> call
+        :none -> :none
+        _other -> await_call(client, channel_id, event, timeout)
+      end
+    end
+
+    test "the first join creates the call and rings the other recipient" do
+      {alice, bob} = dm_ring_setup("dmr1")
+      dm_voice(alice, "dmr1")
+
+      assert %{
+               "channel_id" => "dmr1",
+               "ringing" => ["3"],
+               "voice_states" => [%{"user_id" => "2"}]
+             } = await_call(bob, "dmr1", "CALL_CREATE")
+
+      assert %{"channel_id" => "dmr1", "ringing" => ["3"]} =
+               await_call(alice, "dmr1", "CALL_CREATE")
+    end
+
+    test "the ringing user joining stops the ring with CALL_UPDATE" do
+      {alice, bob} = dm_ring_setup("dmr2")
+      dm_voice(alice, "dmr2")
+      assert %{"ringing" => ["3"]} = await_call(bob, "dmr2", "CALL_CREATE")
+
+      dm_voice(bob, "dmr2")
+
+      assert %{"ringing" => [], "voice_states" => [%{"user_id" => "2"}, %{"user_id" => "3"}]} =
+               await_call(alice, "dmr2", "CALL_UPDATE")
+    end
+
+    test "declining stops the ring, and the call is deleted when the last participant leaves" do
+      {alice, bob} = dm_ring_setup("dmr3")
+      dm_voice(alice, "dmr3")
+      assert %{"ringing" => ["3"]} = await_call(bob, "dmr3", "CALL_CREATE")
+
+      send_frame(bob.session, 25, %{"channel_id" => "dmr3"})
+      assert %{"ringing" => [], "voice_states" => [_]} = await_call(alice, "dmr3", "CALL_UPDATE")
+
+      dm_voice(alice, nil)
+      assert %{"channel_id" => "dmr3"} = await_call(bob, "dmr3", "CALL_DELETE")
+    end
+
+    test "a ring stops after the ring timeout" do
+      Application.put_env(:discordy_gateway, :ring_timeout_ms, 50)
+      on_exit(fn -> Application.delete_env(:discordy_gateway, :ring_timeout_ms) end)
+
+      {alice, bob} = dm_ring_setup("dmr4")
+      dm_voice(alice, "dmr4")
+      assert %{"ringing" => ["3"]} = await_call(bob, "dmr4", "CALL_CREATE")
+
+      assert %{"ringing" => []} = await_call(bob, "dmr4", "CALL_UPDATE", 1_000)
+    end
+
+    test "a recipient connecting during a call gets CALL_CREATE after READY" do
+      dm_access("dmr5")
+      Fakes.put(:voice_nodes, [voice_node("a")])
+      alice = online("2")
+      dm_voice(alice, "dmr5")
+      assert %{"channel_id" => "dmr5"} = await(alice, "VOICE_SERVER_UPDATE")
+
+      bob = online("3")
+
+      assert %{"channel_id" => "dmr5", "ringing" => ["3"]} =
+               await_call(bob, "dmr5", "CALL_CREATE")
+    end
   end
 end

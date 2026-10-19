@@ -26,7 +26,8 @@ defmodule DiscordyGateway.Contracts do
     e2ee_ack: 21,
     p2p_signal: 22,
     voice_telemetry: 23,
-    watch_together: 24
+    watch_together: 24,
+    call_decline: 25
   }
 
   @close_codes %{

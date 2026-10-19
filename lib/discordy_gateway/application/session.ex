@@ -273,6 +273,11 @@ defmodule DiscordyGateway.Application.Session do
 
   defp identified_command(:watch_together, _command, state), do: state
 
+  defp identified_command(:call_decline, %{channel_id: channel_id}, state) do
+    _ = DmCall.decline(channel_id, state.identity.user_id)
+    state
+  end
+
   defp async(state, fun) do
     session = self()
 
@@ -313,6 +318,7 @@ defmodule DiscordyGateway.Application.Session do
     state = dispatch(state, "READY", Dispatch.encode(Ready.payload(identity, state.id, ready)))
     state = join_guilds(state, List.wrap(ready["guilds"]))
     replay_inbox(state)
+    :ok = DmCall.announce_calls(identity.user_id, self())
     Publisher.update(presence_context(state), session_presence(payload.presence, identity))
     state
   end
