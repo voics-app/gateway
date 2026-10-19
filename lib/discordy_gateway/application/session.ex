@@ -179,6 +179,18 @@ defmodule DiscordyGateway.Application.Session do
   def handle_info({:resume_expired, token}, %{detach_token: token} = state) when token != nil,
     do: {:stop, :normal, state}
 
+  def handle_info({:voice_detach_expired, token}, %{detach_token: token} = state)
+      when token != nil and state.voice_scope != nil do
+    session = %{pid: self(), id: state.id, identity: state.identity}
+
+    {:noreply,
+     %{
+       state
+       | voice_scope:
+           VoiceRouting.route(session, state.voice_scope, leave_request(state.voice_scope))
+     }}
+  end
+
   def handle_info(:refresh_presence, %{status: :identified} = state) do
     Ports.presence_store().refresh(state.identity.user_id)
     Process.send_after(self(), :refresh_presence, @presence_refresh_ms)
@@ -509,10 +521,33 @@ defmodule DiscordyGateway.Application.Session do
   defp transport_down(%{status: :identified} = state) do
     token = make_ref()
     Process.send_after(self(), {:resume_expired, token}, Settings.resume_window_ms())
+
+    if state.voice_scope,
+      do:
+        Process.send_after(
+          self(),
+          {:voice_detach_expired, token},
+          Settings.voice_detach_grace_ms()
+        )
+
     {:noreply, %{state | transport: nil, transport_ref: nil, detach_token: token}}
   end
 
   defp transport_down(state), do: {:stop, :normal, state}
+
+  defp leave_request(scope) do
+    %{
+      guild_id: scope_guild(scope),
+      channel_id: nil,
+      self_mute: false,
+      self_deaf: false,
+      self_video: false,
+      self_stream: false
+    }
+  end
+
+  defp scope_guild({:guild, guild_id}), do: guild_id
+  defp scope_guild(_scope), do: nil
 
   defp close(state, reason), do: close_with(state, Contracts.close_code(reason))
 
