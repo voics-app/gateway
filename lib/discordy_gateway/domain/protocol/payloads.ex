@@ -158,6 +158,12 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
     end
   end
 
+  defp decode_map(:call_decline, d) do
+    with {:ok, channel_id} <- string(d, "channel_id") do
+      {:ok, %{channel_id: channel_id}}
+    end
+  end
+
   defp intents(d) do
     case Map.get(d, "intents", 0) do
       intents when is_integer(intents) -> {:ok, intents}

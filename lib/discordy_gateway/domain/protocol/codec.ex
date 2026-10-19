@@ -21,6 +21,7 @@ defmodule DiscordyGateway.Domain.Protocol.Codec do
           | :p2p_signal
           | :voice_telemetry
           | :watch_together
+          | :call_decline
 
   @client_ops %{
     1 => :heartbeat,
@@ -33,7 +34,8 @@ defmodule DiscordyGateway.Domain.Protocol.Codec do
     21 => :e2ee_ack,
     22 => :p2p_signal,
     23 => :voice_telemetry,
-    24 => :watch_together
+    24 => :watch_together,
+    25 => :call_decline
   }
 
   @doc "Validates an inbound frame map and decodes its payload."
