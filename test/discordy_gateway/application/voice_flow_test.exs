@@ -1,9 +1,26 @@
 defmodule DiscordyGateway.Application.VoiceFlowTest do
   use DiscordyGateway.Case, async: false
 
+  alias DiscordyGateway.Application.Events.Ingest
   alias DiscordyGateway.Application.Ports
   alias DiscordyGateway.Application.Voice.{Allocator, DrainNode, NodeMonitor}
   alias DiscordyGateway.Fixtures
+
+  defp publish(topic, type, data, fields) do
+    envelope =
+      Map.merge(
+        %{
+          "id" => unique_id(),
+          "type" => type,
+          "v" => 1,
+          "data" => data,
+          "occurred_at" => "2026-10-18T00:00:00Z"
+        },
+        fields
+      )
+
+    Ingest.handle(topic, Jason.encode!(envelope))
+  end
 
   defp setup_guild(gid) do
     payload = Fixtures.guild_payload(gid)

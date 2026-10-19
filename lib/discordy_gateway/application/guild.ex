@@ -350,7 +350,8 @@ defmodule DiscordyGateway.Application.Guild do
 
   defp join_opts(state, channel_id) do
     %{
-      region: GuildState.voice_region_for(state.cache, channel_id, Settings.default_voice_region()),
+      region:
+        GuildState.voice_region_for(state.cache, channel_id, Settings.default_voice_region()),
       e2ee: VoiceTokenClaims.e2ee_for(GuildState.channel(state.cache, channel_id)),
       whereis: fn id -> Ports.session_directory().whereis(id) end
     }
