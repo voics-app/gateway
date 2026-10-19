@@ -34,6 +34,7 @@ defmodule DiscordyGateway.Infrastructure.Config do
       {:default_voice_region,
        {:ok, env["DEFAULT_VOICE_REGION"] |> blank_to_nil() |> Kernel.||("nl-home")}},
       {:e2ee_settings_unavailable_policy, e2ee_settings_policy(env)},
+      {:voice_detach_grace_ms, voice_detach_grace(env)},
       {:cluster_dns_query, {:ok, blank_to_nil(env["CLUSTER_DNS_QUERY"])}},
       {:port, port(env)}
     ]
@@ -163,6 +164,13 @@ defmodule DiscordyGateway.Infrastructure.Config do
       if byte_size(secret) >= 16,
         do: {:ok, secret},
         else: {:error, "VOICE_TOKEN_SECRET must be at least 16 bytes"}
+    end
+  end
+
+  defp voice_detach_grace(env) do
+    case Integer.parse(blank_to_nil(env["VOICE_DETACH_GRACE_MS"]) || "15000") do
+      {ms, ""} when ms >= 0 -> {:ok, ms}
+      _ -> {:error, "VOICE_DETACH_GRACE_MS must be a non-negative integer"}
     end
   end
 

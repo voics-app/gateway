@@ -483,6 +483,26 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
       assert %{"channel_id" => "dmr3"} = await_call(bob, "dmr3", "CALL_DELETE")
     end
 
+    test "a dropped connection leaves the call after the voice grace, before the resume window" do
+      settings = Application.get_env(:discordy_gateway, :settings)
+      on_exit(fn -> Application.put_env(:discordy_gateway, :settings, settings) end)
+
+      Application.put_env(
+        :discordy_gateway,
+        :settings,
+        Keyword.merge(settings, resume_window_ms: 60_000, voice_detach_grace_ms: 50)
+      )
+
+      {alice, bob} = dm_ring_setup("dmr6")
+      dm_voice(alice, "dmr6")
+      assert %{"ringing" => ["3"]} = await_call(bob, "dmr6", "CALL_CREATE")
+
+      Process.unlink(alice.transport)
+      Process.exit(alice.transport, :kill)
+      assert %{"channel_id" => "dmr6"} = await_call(bob, "dmr6", "CALL_DELETE", 1_000)
+      assert Process.alive?(alice.session)
+    end
+
     test "a ring stops after the ring timeout" do
       Application.put_env(:discordy_gateway, :ring_timeout_ms, 50)
       on_exit(fn -> Application.delete_env(:discordy_gateway, :ring_timeout_ms) end)

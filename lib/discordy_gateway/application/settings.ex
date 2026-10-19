@@ -17,6 +17,13 @@ defmodule DiscordyGateway.Application.Settings do
   @spec resume_window_ms() :: pos_integer()
   def resume_window_ms, do: get(:resume_window_ms, Contracts.resume_window_ms())
 
+  @doc """
+  How long a dropped connection keeps its voice state before the session leaves voice. Shorter than
+  the resume window, so a closed or crashed client does not hold a call open for minutes.
+  """
+  @spec voice_detach_grace_ms() :: non_neg_integer()
+  def voice_detach_grace_ms, do: get(:voice_detach_grace_ms, 15_000)
+
   @doc "How long a connection may stay unauthenticated."
   @spec identify_timeout_ms() :: pos_integer()
   def identify_timeout_ms, do: get(:identify_timeout_ms, 10_000)
