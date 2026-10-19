@@ -58,6 +58,31 @@ defmodule DiscordyGateway.Application.RelayFlowTest do
       assert {:ok, [{"m1", _}]} = Ports.inbox_store().list("dev-3b")
     end
 
+    test "envelopes reach recipients in the order the sender sent them" do
+      access("c1", "ephemeral")
+      sender = online("2")
+      receiver = online("3")
+
+      # A welcome to many devices takes longer to store than the message that follows it.
+      many =
+        for n <- 1..300,
+            do: %{"user_id" => "3", "device_id" => "old-#{n}", "ciphertext_b64" => "AA"}
+
+      welcome = %{
+        "message_id" => "w1",
+        "content_type" => "welcome",
+        "recipients" => [
+          %{"user_id" => "3", "device_id" => "dev-3", "ciphertext_b64" => "AA"} | many
+        ]
+      }
+
+      send_frame(sender.session, 20, envelope(welcome))
+      send_frame(sender.session, 20, envelope(%{"message_id" => "m2"}))
+
+      assert %{"d" => %{"message_id" => "w1"}} = await_op(receiver, 20, 2_000)
+      assert %{"d" => %{"message_id" => "m2"}} = await_op(receiver, 20, 2_000)
+    end
+
     test "ACK deletes the entries from the device's inbox" do
       access("c1", "ephemeral")
       sender = online("2")

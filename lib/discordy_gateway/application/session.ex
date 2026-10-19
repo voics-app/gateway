@@ -44,7 +44,8 @@ defmodule DiscordyGateway.Application.Session do
     guild_ids: MapSet.new(),
     guild_refs: %{},
     friend_ids: [],
-    voice_scope: nil
+    voice_scope: nil,
+    relay_worker: nil
   ]
 
   ## Client API
@@ -252,13 +253,13 @@ defmodule DiscordyGateway.Application.Session do
   end
 
   defp identified_command(:e2ee_envelope, envelope, state),
-    do: async(state, fn pid -> E2eeRelay.relay(state.identity, pid, envelope) end)
+    do: in_order(state, fn pid -> E2eeRelay.relay(state.identity, pid, envelope) end)
 
   defp identified_command(:e2ee_ack, %{message_ids: ids}, state),
     do: async(state, fn _pid -> E2eeRelay.ack(state.identity, ids) end)
 
   defp identified_command(:p2p_signal, signal, state),
-    do: async(state, fn pid -> P2pRelay.relay(state.identity, pid, signal) end)
+    do: in_order(state, fn pid -> P2pRelay.relay(state.identity, pid, signal) end)
 
   defp identified_command(:voice_telemetry, sample, %{voice_scope: scope} = state)
        when scope != nil,
@@ -288,6 +289,41 @@ defmodule DiscordyGateway.Application.Session do
   defp identified_command(:call_decline, %{channel_id: channel_id}, state) do
     _ = DmCall.decline(channel_id, state.identity.user_id)
     state
+  end
+
+  # E2EE envelopes and P2P signals must reach recipients in the order the client sent them (a
+  # welcome before the messages of its group, an offer before its ICE candidates), so they run one
+  # after another on a worker owned by this session instead of on a task each.
+  defp in_order(state, fun) do
+    worker = state.relay_worker || start_relay_worker(self())
+    send(worker, {:run, fun})
+    %{state | relay_worker: worker}
+  end
+
+  defp start_relay_worker(session) do
+    {:ok, pid} =
+      Task.Supervisor.start_child(DiscordyGateway.TaskSupervisor, fn ->
+        ref = Process.monitor(session)
+        relay_loop(session, ref)
+      end)
+
+    pid
+  end
+
+  defp relay_loop(session, ref) do
+    receive do
+      {:run, fun} ->
+        try do
+          fun.(session)
+        rescue
+          error -> Logger.error("relay failed: #{Exception.message(error)}")
+        end
+
+        relay_loop(session, ref)
+
+      {:DOWN, ^ref, :process, _pid, _reason} ->
+        :ok
+    end
   end
 
   defp async(state, fun) do
