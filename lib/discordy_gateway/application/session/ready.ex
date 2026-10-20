@@ -18,6 +18,8 @@ defmodule DiscordyGateway.Application.Session.Ready do
       "private_channels" => List.wrap(ready["private_channels"]),
       "relationships" => List.wrap(ready["relationships"]),
       "user_settings" => ready["user_settings"] || %{},
+      "user_guild_settings" => List.wrap(ready["user_guild_settings"]),
+      "notes" => ready["notes"] || %{},
       "presences" => Publisher.friend_payloads(friend_ids(ready))
     }
     |> put_application(identity)
