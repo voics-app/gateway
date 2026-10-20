@@ -1,9 +1,26 @@
 defmodule DiscordyGateway.Application.VoiceFlowTest do
   use DiscordyGateway.Case, async: false
 
+  alias DiscordyGateway.Application.Events.Ingest
   alias DiscordyGateway.Application.Ports
   alias DiscordyGateway.Application.Voice.{Allocator, DrainNode, NodeMonitor}
   alias DiscordyGateway.Fixtures
+
+  defp publish(topic, type, data, fields) do
+    envelope =
+      Map.merge(
+        %{
+          "id" => unique_id(),
+          "type" => type,
+          "v" => 1,
+          "data" => data,
+          "occurred_at" => "2026-10-18T00:00:00Z"
+        },
+        fields
+      )
+
+    Ingest.handle(topic, Jason.encode!(envelope))
+  end
 
   defp setup_guild(gid) do
     payload = Fixtures.guild_payload(gid)
@@ -223,6 +240,84 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
     await(alice, "VOICE_SERVER_UPDATE")
     GenServer.stop(alice.session)
     assert %{"channel_id" => nil, "user_id" => "2"} = await_left(bob)
+  end
+
+  describe "moderator move and disconnect (api#24)" do
+    defp moderate(gid, user, channel) do
+      publish(
+        :guild,
+        "VOICE_MEMBER_MOVE",
+        %{"guild_id" => gid, "user_id" => user, "channel_id" => channel},
+        %{"guild_id" => gid}
+      )
+    end
+
+    defp add_voice_channel(gid, id) do
+      publish(
+        :guild,
+        "CHANNEL_CREATE",
+        %{"id" => id, "type" => 2, "name" => "second", "guild_id" => gid},
+        %{"guild_id" => gid}
+      )
+
+      Process.sleep(30)
+    end
+
+    test "a move re-homes the member to the target channel with a fresh token" do
+      setup_guild("m1")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+      alice = online_in("m1", "2")
+      bob = online_in("m1", "3")
+      add_voice_channel("m1", "14")
+      join(alice, "m1", "12")
+      await(alice, "VOICE_SERVER_UPDATE")
+      await(bob, "VOICE_STATE_UPDATE")
+
+      moderate("m1", "2", "14")
+
+      assert %{"channel_id" => "14", "user_id" => "2"} = await(bob, "VOICE_STATE_UPDATE")
+
+      assert %{"channel_id" => "14", "guild_id" => "m1", "token" => "voice-token:2:a:false"} =
+               await(alice, "VOICE_SERVER_UPDATE")
+
+      assert await(bob, "VOICE_MEMBER_MOVE", 100) == :none
+    end
+
+    test "a disconnect announces channel null and releases the node" do
+      setup_guild("m2")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+      alice = online_in("m2", "2")
+      bob = online_in("m2", "3")
+      join(alice, "m2", "12")
+      await(alice, "VOICE_SERVER_UPDATE")
+
+      moderate("m2", "2", nil)
+
+      assert %{"channel_id" => nil, "user_id" => "2"} = await_left(alice)
+      assert %{"channel_id" => nil, "user_id" => "2"} = await_left(bob)
+      Process.sleep(30)
+      assert :none = Ports.voice_allocations().get("m2")
+    end
+
+    test "moving a member who is not in voice, or to a non-voice channel, does nothing" do
+      setup_guild("m3")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+      alice = online_in("m3", "2")
+      bob = online_in("m3", "3")
+
+      moderate("m3", "2", "12")
+      assert await(alice, "VOICE_SERVER_UPDATE", 100) == :none
+
+      join(alice, "m3", "12")
+      await(alice, "VOICE_SERVER_UPDATE")
+      await(bob, "VOICE_STATE_UPDATE")
+
+      moderate("m3", "2", "10")
+      # A late echo of the join may still arrive; what must not arrive is a move to channel 10.
+      refute_receive {:client, "3",
+                      %{"t" => "VOICE_STATE_UPDATE", "d" => %{"channel_id" => "10"}}},
+                     150
+    end
   end
 
   describe "account e2ee_calls_default (voice#8)" do
