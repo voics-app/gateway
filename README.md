@@ -96,3 +96,7 @@ listed, so downgrading does not help.
 - Accepted in `mix.exs` with `hex: [ignore_advisories: ["GHSA-w4f7-4cxr-rv3c"]]`, so `mix hex.audit`
   passes and only this advisory is ignored. Remove the entry as soon as Hex ships a patched gun or
   cowlib (`mix hex.outdated gun`, `mix hex.info cowlib`).
+
+## Git hooks
+
+Tests run locally, not in CI. Install [lefthook](https://lefthook.dev/installation/) once and run `make hooks` (or `lefthook install`) to enable the pre-push hook in `lefthook.yml`: it runs this repository's lint and unit tests before every push. CI repeats only the slim gate on pull requests. Skip once with `LEFTHOOK=0 git push`.
