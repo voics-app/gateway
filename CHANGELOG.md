@@ -2,6 +2,10 @@
 
 All notable changes are recorded here by release-please from Conventional Commits.
 
+## 0.4.1
+
+- fix(etcd): reuse the registered eetcd connection on resync (no more :already_started loop); etcd is a soft readiness check (gateway#27)
+
 ## 0.1.0
 
 First release: everything on develop up to this point, deployed to gen-serv.
