@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.7
 ARG ELIXIR_IMAGE=hexpm/elixir:1.20.4-erlang-29.1.2-alpine-3.24.2
 ARG RUNTIME_IMAGE=alpine:3.24.2
 
@@ -9,7 +9,8 @@ WORKDIR /app
 ENV MIX_ENV=prod
 RUN mix local.hex --force && mix local.rebar --force
 COPY mix.exs mix.lock ./
-RUN mix deps.get --only prod
+RUN --mount=type=cache,target=/root/.hex/packages \
+    mix deps.get --only prod
 COPY config config
 RUN mix deps.compile
 COPY lib lib
