@@ -4,6 +4,9 @@ defmodule DiscordyGateway.Interface.Metrics do
   import Telemetry.Metrics
 
   alias DiscordyGateway.Application.Ports
+  alias DiscordyGateway.Interface.HttpMetrics
+
+  @latency_buckets [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 10.0]
 
   @doc "Child spec of the Prometheus reporter."
   def reporter, do: {TelemetryMetricsPrometheus.Core, name: __MODULE__, metrics: metrics()}
@@ -23,6 +26,17 @@ defmodule DiscordyGateway.Interface.Metrics do
       counter("discordy_gateway.session.closed.count", tags: [:code]),
       counter("discordy_gateway.dispatch.sent.count", tags: [:event]),
       counter("discordy_gateway.events.consumed.count", tags: [:topic, :outcome]),
+      counter("http.requests.total",
+        event_name: HttpMetrics.event(),
+        measurement: :total,
+        tags: [:method, :route, :status]
+      ),
+      distribution("http.request.duration.seconds",
+        event_name: HttpMetrics.event(),
+        measurement: :seconds,
+        tags: [:method, :route, :status],
+        reporter_options: [buckets: @latency_buckets]
+      ),
       last_value("discordy_gateway.gauges.sessions_local"),
       last_value("discordy_gateway.gauges.guild_processes"),
       last_value("discordy_gateway.gauges.voice_allocations")
