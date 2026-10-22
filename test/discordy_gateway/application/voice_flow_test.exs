@@ -283,6 +283,26 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
       assert await(bob, "VOICE_MEMBER_MOVE", 100) == :none
     end
 
+    test "BAN_MESSAGE_PURGE is a bus-only event and never reaches clients" do
+      setup_guild("m3")
+      bob = online_in("m3", "3")
+
+      publish(
+        :guild,
+        "BAN_MESSAGE_PURGE",
+        %{
+          "guild_id" => "m3",
+          "user_id" => "9",
+          "channel_ids" => ["1"],
+          "since_ms" => 1,
+          "delete_message_seconds" => 60
+        },
+        %{"guild_id" => "m3"}
+      )
+
+      assert await(bob, "BAN_MESSAGE_PURGE", 100) == :none
+    end
+
     test "a disconnect announces channel null and releases the node" do
       setup_guild("m2")
       Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
