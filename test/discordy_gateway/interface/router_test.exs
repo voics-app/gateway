@@ -34,6 +34,27 @@ defmodule DiscordyGateway.Interface.RouterTest do
 
   def down?, do: false
 
+  def up?, do: true
+
+  test "readyz ignores failing soft checks but still reports them" do
+    previous =
+      {Application.get_env(:discordy_gateway, :readiness),
+       Application.get_env(:discordy_gateway, :readiness_soft)}
+
+    Application.put_env(:discordy_gateway, :readiness, up: {__MODULE__, :up?})
+    Application.put_env(:discordy_gateway, :readiness_soft, etcd: {__MODULE__, :down?})
+
+    on_exit(fn ->
+      {hard, soft} = previous
+      Application.put_env(:discordy_gateway, :readiness, hard || [])
+      Application.put_env(:discordy_gateway, :readiness_soft, soft || [])
+    end)
+
+    conn = call(:get, "/readyz")
+    assert conn.status == 200
+    assert %{"checks" => %{"up" => true, "etcd" => false}} = Jason.decode!(conn.resp_body)
+  end
+
   test "metrics exposes Prometheus text" do
     :telemetry.execute([:discordy_gateway, :session, :started], %{count: 1}, %{code: nil})
     conn = call(:get, "/metrics")

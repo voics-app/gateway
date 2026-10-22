@@ -62,10 +62,8 @@ defmodule DiscordyGateway.CompositionRoot do
       internal_token: config.internal_token
     )
 
-    put(:readiness,
-      valkey: {Valkey.Pool, :ready?},
-      etcd: {VoiceNodeDirectory, :ready?}
-    )
+    put(:readiness, valkey: {Valkey.Pool, :ready?})
+    put(:readiness_soft, etcd: {VoiceNodeDirectory, :ready?})
 
     endpoint = Application.get_env(:discordy_gateway, Endpoint, [])
     http = [ip: {0, 0, 0, 0}, port: config.port]
