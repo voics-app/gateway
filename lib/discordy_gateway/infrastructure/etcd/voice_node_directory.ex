@@ -91,6 +91,12 @@ defmodule DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory do
         Logger.warning("etcd voice node sync failed: #{inspect(reason)}")
         schedule_resync(state)
     end
+  catch
+    # A crash here would restart this process while the eetcd connection (owned by eetcd's own
+    # supervisor, not by us) survives; etcd trouble must never take the process down.
+    kind, reason ->
+      Logger.warning("etcd voice node sync crashed: #{Exception.format_banner(kind, reason)}")
+      schedule_resync(state)
   end
 
   defp schedule_resync(state) do
@@ -98,13 +104,30 @@ defmodule DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory do
     %{state | watch: nil, ready: false}
   end
 
+  # The eetcd connection outlives this process and reconnects on its own, so a second `open/2`
+  # under the same name fails with `:already_started`. Reuse the registered connection.
   defp ensure_connection(endpoints) do
-    case :eetcd.open(@connection, endpoints) do
+    case :eetcd_conn.lookup(@connection) do
       {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-      {:error, reason} -> {:error, reason}
+      {:error, _unavailable} -> open_connection(endpoints)
     end
   end
+
+  defp open_connection(endpoints) do
+    case :eetcd.open(@connection, endpoints) do
+      {:ok, _pid} -> :ok
+      {:error, reason} -> if already_started?(reason), do: :ok, else: {:error, reason}
+    end
+  end
+
+  # `connect_all` reports failures as `[{host, reason}]`, other modes as a bare reason.
+  defp already_started?(:already_started), do: true
+  defp already_started?({:already_started, _pid}), do: true
+
+  defp already_started?(failures) when is_list(failures),
+    do: Enum.any?(failures, &match?({_host, :already_started}, &1))
+
+  defp already_started?(_reason), do: false
 
   defp load do
     request =
