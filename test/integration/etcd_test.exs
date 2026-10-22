@@ -86,4 +86,17 @@ defmodule DiscordyGateway.Integration.EtcdTest do
     assert :ok = VoiceNodeControl.undrain("n7")
     {:ok, %{kvs: []}} = :eetcd_kv.get(VoiceNodeDirectory.connection(), "/discordy/voice/drain/n7")
   end
+
+  test "recovers when the directory restarts while the eetcd connection survives" do
+    old = Process.whereis(VoiceNodeDirectory)
+    Process.exit(old, :kill)
+
+    await(fn ->
+      new = Process.whereis(VoiceNodeDirectory)
+      new != nil and new != old and VoiceNodeDirectory.ready?()
+    end)
+
+    put_node("n9", "nl-home")
+    await(fn -> match?({:ok, _}, VoiceNodeDirectory.get_node("n9")) end)
+  end
 end
