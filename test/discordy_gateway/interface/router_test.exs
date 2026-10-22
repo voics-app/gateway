@@ -41,6 +41,18 @@ defmodule DiscordyGateway.Interface.RouterTest do
     assert conn.resp_body =~ "discordy_gateway_session_started_count"
   end
 
+  test "requests are counted and timed by route template and status class" do
+    call(:get, "/healthz")
+    call(:post, "/internal/v1/voice/nodes/abc/drain")
+    call(:get, "/nope")
+    body = call(:get, "/metrics").resp_body
+
+    assert body =~ ~s(http_requests_total{method="GET",route="/healthz",status="2xx"})
+    assert body =~ ~s(route="/internal/v1/voice/nodes/:node_id/drain",status="4xx")
+    assert body =~ ~s(route="/*_path",status="4xx")
+    assert body =~ "http_request_duration_seconds_bucket"
+  end
+
   test "the gateway endpoint requires v=1 and encoding=json" do
     assert %{status: 400} = call(:get, "/gateway")
     assert %{status: 400} = call(:get, "/gateway?v=2&encoding=json")
