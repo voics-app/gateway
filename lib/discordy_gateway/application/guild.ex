@@ -279,6 +279,10 @@ defmodule DiscordyGateway.Application.Guild do
   defp handle_event(%EventEnvelope{type: "VOICE_MEMBER_MOVE", data: data}, state),
     do: {:noreply, move_member(state, data["user_id"], data["channel_id"])}
 
+  # Bus-only (api#52): asks the messages service to purge a banned user's recent messages. The
+  # clients learn about it through MESSAGE_DELETE_BULK; this event is never fanned out.
+  defp handle_event(%EventEnvelope{type: "BAN_MESSAGE_PURGE"}, state), do: {:noreply, state}
+
   defp handle_event(%EventEnvelope{type: type, data: data} = envelope, state) do
     updated = GuildState.apply_event(state.cache, type, data)
     plan_cache = if type in @remove_events, do: state.cache, else: updated
