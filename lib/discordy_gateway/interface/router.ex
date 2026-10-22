@@ -7,18 +7,21 @@ defmodule DiscordyGateway.Interface.Router do
   use Plug.Router
 
   alias DiscordyGateway.Application.{Stats, Voice.DrainNode}
-  alias DiscordyGateway.Interface.{Health, InternalAuth, Socket}
+  alias DiscordyGateway.Interface.{Health, HttpMetrics, InternalAuth, Socket}
 
   @max_frame_size 4_000_000
   @idle_timeout_ms 90_000
 
   plug :match
+  plug HttpMetrics
   plug :dispatch
 
   get "/gateway" do
     conn = fetch_query_params(conn)
 
     if conn.query_params["v"] == "1" and conn.query_params["encoding"] == "json" do
+      HttpMetrics.record(conn, 101)
+
       conn
       |> WebSockAdapter.upgrade(Socket, [],
         timeout: @idle_timeout_ms,
