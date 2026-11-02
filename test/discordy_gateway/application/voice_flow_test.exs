@@ -121,6 +121,15 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
     assert :none = Ports.voice_allocations().get("v3")
   end
 
+  # Skips earlier voice states (a join can be broadcast more than once) until one for `channel_id` arrives.
+  defp await_in(client, channel_id) do
+    case await(client, "VOICE_STATE_UPDATE") do
+      %{"channel_id" => ^channel_id} = payload -> payload
+      :none -> :none
+      _other -> await_in(client, channel_id)
+    end
+  end
+
   defp await_left(client) do
     case await(client, "VOICE_STATE_UPDATE") do
       %{"channel_id" => nil} = payload -> payload
@@ -275,7 +284,7 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
 
       moderate("m1", "2", "14")
 
-      assert %{"channel_id" => "14", "user_id" => "2"} = await(bob, "VOICE_STATE_UPDATE")
+      assert %{"channel_id" => "14", "user_id" => "2"} = await_in(bob, "14")
 
       assert %{"channel_id" => "14", "guild_id" => "m1", "token" => "voice-token:2:a:false"} =
                await(alice, "VOICE_SERVER_UPDATE")
