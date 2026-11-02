@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, develop, "release/**", "hotfix/**"]
     tags: ["v*"]
+  schedule:
+    - cron: "17 4 * * 1" # weekly cold build (CI_CACHE off): proves the persistent CI cache hides nothing (ADR 0022)
   pull_request:
     paths-ignore: ["**.md", "docs/**"]
 
