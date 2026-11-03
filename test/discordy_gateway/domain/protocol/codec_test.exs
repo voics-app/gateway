@@ -88,6 +88,19 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
     end
   end
 
+  test "decodes call ring with unique targets and rejects empty or oversized lists" do
+    assert {:ok, {:call_ring, %{channel_id: "c", user_ids: ["1", "2"]}}} =
+             Codec.decode_inbound(frame(26, %{"channel_id" => "c", "user_ids" => ~w(1 2 1)}))
+
+    assert Codec.decode_inbound(frame(26, %{"channel_id" => "c", "user_ids" => []})) ==
+             {:error, 4002}
+
+    many = Enum.map(1..11, &Integer.to_string/1)
+
+    assert Codec.decode_inbound(frame(26, %{"channel_id" => "c", "user_ids" => many})) ==
+             {:error, 4002}
+  end
+
   describe "op 4 VOICE_STATE_UPDATE" do
     test "decodes join and leave" do
       d = %{"guild_id" => "1", "channel_id" => "2", "self_mute" => true, "self_deaf" => false}
