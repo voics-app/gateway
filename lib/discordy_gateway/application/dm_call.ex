@@ -13,7 +13,7 @@ defmodule DiscordyGateway.Application.DmCall do
 
   use GenServer, restart: :temporary
 
-  alias DiscordyGateway.Application.{Dispatch, Ports, Settings}
+  alias DiscordyGateway.Application.{CallRecorder, Dispatch, Ports, Settings}
   alias DiscordyGateway.Application.Voice.{Effects, Room}
   alias DiscordyGateway.Domain.Voice.{VoiceStates, VoiceTokenClaims}
 
@@ -109,7 +109,9 @@ defmodule DiscordyGateway.Application.DmCall do
        recipients: [],
        delivery_mode: "standard",
        ringing: %{},
-       members: MapSet.new()
+       members: MapSet.new(),
+       recorder: nil,
+       joined: []
      }}
   end
 
@@ -220,6 +222,7 @@ defmodule DiscordyGateway.Application.DmCall do
   defp finish(state, before, effects) do
     state = settle_ringing(state)
     state = sync_members(state)
+    state = record(state)
     Effects.run(effects, &broadcast(state, &1, &2))
 
     for {event, payload} <- call_events(before, call_of(state), state.id),
@@ -296,6 +299,29 @@ defmodule DiscordyGateway.Application.DmCall do
         do: :pg.leave(@pg, {:call_user, user_id}, self())
 
     %{state | members: wanted}
+  end
+
+  # Mirrors the call into its system message: created with the first participant, updated as
+  # people join, ended when the room empties.
+  defp record(%{recorder: nil} = state) do
+    case participant_ids(state) do
+      [] ->
+        state
+
+      participants ->
+        %{state | recorder: CallRecorder.start(state.id, participants), joined: participants}
+    end
+  end
+
+  defp record(%{recorder: recorder} = state) do
+    if Room.empty?(state.room) do
+      CallRecorder.finish(recorder, state.joined)
+      state
+    else
+      joined = Enum.uniq(state.joined ++ participant_ids(state))
+      if joined != state.joined, do: CallRecorder.joined(recorder, joined)
+      %{state | joined: joined}
+    end
   end
 
   defp participant_ids(state), do: Enum.map(Room.voice_states(state.room), & &1.user_id)

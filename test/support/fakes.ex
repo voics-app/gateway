@@ -328,3 +328,25 @@ defmodule DiscordyGateway.Fakes.CallDefaults do
     end
   end
 end
+
+defmodule DiscordyGateway.Fakes.MessagesClient do
+  @moduledoc false
+  @behaviour DiscordyGateway.Application.Ports.MessagesClient
+
+  alias DiscordyGateway.Fakes
+
+  @impl true
+  def create_call_message(channel_id, author_id, participants) do
+    Fakes.record(:messages_client, {:create, channel_id, author_id, participants})
+
+    if Fakes.get(:messages_client_failing, false),
+      do: {:error, :unavailable},
+      else: {:ok, "call-message-" <> channel_id}
+  end
+
+  @impl true
+  def update_call_message(channel_id, message_id, update) do
+    Fakes.record(:messages_client, {:update, channel_id, message_id, update})
+    if Fakes.get(:messages_client_failing, false), do: {:error, :unavailable}, else: :ok
+  end
+end

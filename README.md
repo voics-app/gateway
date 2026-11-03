@@ -71,7 +71,7 @@ reported at once. Names follow P2.
 | `TURN_STATIC_AUTH_SECRET` | yes | coturn `static-auth-secret`; mints TURN credentials |
 | `TURN_URLS` | yes | comma-separated `turn:` URLs handed to clients |
 | `API_INTERNAL_URL` | yes | api base URL |
-| `MESSAGES_INTERNAL_URL` | yes | messages base URL |
+| `MESSAGES_INTERNAL_URL` | yes | messages base URL; DM calls post and update their call system message (type 3) there |
 | `VOICE_TOKEN_SECRET` | yes | HS256 secret, at least 16 bytes |
 | `PUBLIC_GATEWAY_URL` | yes | advertised as `resume_gateway_url` |
 | `DEFAULT_VOICE_REGION` | no (`nl-home`) | region used when guild and channel set none |
