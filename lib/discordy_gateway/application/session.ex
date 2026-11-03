@@ -123,6 +123,16 @@ defmodule DiscordyGateway.Application.Session do
   def handle_info({:dispatch, event, encoded}, %{status: :identified} = state),
     do: {:noreply, dispatch(state, event, encoded)}
 
+  # SESSION_REVOKE is bus-only: it ends the connection of a login session the api revoked.
+  def handle_info(
+        {:user_event, %EventEnvelope{type: "SESSION_REVOKE", data: data}},
+        %{status: :identified} = state
+      ) do
+    if revoked?(state.identity, data),
+      do: close(state, :authentication_failed),
+      else: {:noreply, state}
+  end
+
   def handle_info({:user_event, %EventEnvelope{} = envelope}, %{status: :identified} = state),
     do: {:noreply, user_event(state, envelope)}
 
@@ -484,6 +494,12 @@ defmodule DiscordyGateway.Application.Session do
       state
     end
   end
+
+  defp revoked?(%Identity{auth_session_id: id}, %{"session_ids" => ids})
+       when is_binary(id) and is_list(ids),
+       do: id in ids
+
+  defp revoked?(_identity, _data), do: false
 
   defp follow_membership(state, "GUILD_CREATE", %{"id" => _} = guild) do
     %{state | guild_ids: MapSet.put(state.guild_ids, guild["id"])} |> join_guilds([guild])

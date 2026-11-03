@@ -175,4 +175,40 @@ defmodule DiscordyGateway.Application.SessionTest do
     send(session, {:user_event, %{envelope | type: "USER_UPDATE"}})
     assert %{"t" => "USER_UPDATE"} = next_dispatch("USER_UPDATE")
   end
+
+  describe "SESSION_REVOKE" do
+    defp revoke_envelope(session_ids) do
+      %DiscordyGateway.Domain.Events.EventEnvelope{
+        id: "r1",
+        type: "SESSION_REVOKE",
+        data: %{"session_ids" => session_ids},
+        target_user_ids: ["1"]
+      }
+    end
+
+    test "closes the connection of a revoked auth session with 4004 and ends the session" do
+      {session, _} = connect()
+      identify(session, "1")
+      next_dispatch("READY")
+      ref = Process.monitor(session)
+
+      send(session, {:user_event, revoke_envelope(["other", "auth-1"])})
+
+      assert_receive {:gw_close, 4004}, 1_000
+      assert_receive {:DOWN, ^ref, :process, ^session, :normal}, 1_000
+    end
+
+    test "leaves the connection alone when its auth session is not listed, and never dispatches it" do
+      {session, _} = connect()
+      identify(session, "1")
+      next_dispatch("READY")
+      flush_frames()
+
+      send(session, {:user_event, revoke_envelope(["other"])})
+
+      refute_receive {:gw_close, _}, 100
+      assert next_dispatch("SESSION_REVOKE", 100) == :none
+      assert Process.alive?(session)
+    end
+  end
 end
