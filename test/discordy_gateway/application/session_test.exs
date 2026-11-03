@@ -37,6 +37,16 @@ defmodule DiscordyGateway.Application.SessionTest do
     assert_receive {:gw_close, 4002}
   end
 
+  test "an oversized or malformed activity in a presence update closes with 4002" do
+    {session, _} = connect()
+    identify(session, "1")
+    next_dispatch("READY")
+
+    activity = %{"name" => "Custom Status", "type" => 4, "state" => String.duplicate("a", 129)}
+    send_frame(session, 3, %{"status" => "online", "activities" => [activity], "afk" => false})
+    assert_receive {:gw_close, 4002}
+  end
+
   test "commands before IDENTIFY close with 4003" do
     {session, _} = connect()
     send_frame(session, 3, %{"status" => "online", "activities" => [], "afk" => false})

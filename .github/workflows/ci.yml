@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, develop, "release/**", "hotfix/**"]
     tags: ["v*"]
+  schedule:
+    - cron: "17 4 * * 1" # weekly cold build (CI_CACHE off): proves the persistent CI cache hides nothing (ADR 0022)
   pull_request:
     paths-ignore: ["**.md", "docs/**"]
 
@@ -15,7 +17,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  gitflow:
+    if: github.event_name == 'pull_request'
+    uses: discordy-voics/.github/.github/workflows/gitflow-guard.yml@main
+
   elixir:
+    permissions:
+      contents: read
+      actions: read   # shared workflow: tag builds look up the main run of this commit
     uses: discordy-voics/.github/.github/workflows/elixir.yml@main
     with:
       image-name: gateway

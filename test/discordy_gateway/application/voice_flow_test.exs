@@ -121,6 +121,15 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
     assert :none = Ports.voice_allocations().get("v3")
   end
 
+  # Skips earlier voice states (a join can be broadcast more than once) until one for `channel_id` arrives.
+  defp await_in(client, channel_id) do
+    case await(client, "VOICE_STATE_UPDATE") do
+      %{"channel_id" => ^channel_id} = payload -> payload
+      :none -> :none
+      _other -> await_in(client, channel_id)
+    end
+  end
+
   defp await_left(client) do
     case await(client, "VOICE_STATE_UPDATE") do
       %{"channel_id" => nil} = payload -> payload
@@ -275,7 +284,7 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
 
       moderate("m1", "2", "14")
 
-      assert %{"channel_id" => "14", "user_id" => "2"} = await(bob, "VOICE_STATE_UPDATE")
+      assert %{"channel_id" => "14", "user_id" => "2"} = await_in(bob, "14")
 
       assert %{"channel_id" => "14", "guild_id" => "m1", "token" => "voice-token:2:a:false"} =
                await(alice, "VOICE_SERVER_UPDATE")
@@ -596,6 +605,34 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
 
       dm_voice(alice, nil)
       assert %{"channel_id" => "dmr3"} = await_call(bob, "dmr3", "CALL_DELETE")
+    end
+
+    test "a participant rings another recipient of the running call" do
+      {alice, bob} = dm_ring_setup("dmr7")
+      dm_voice(alice, "dmr7")
+      assert %{"ringing" => ["3"]} = await_call(bob, "dmr7", "CALL_CREATE")
+      send_frame(bob.session, 25, %{"channel_id" => "dmr7"})
+      assert %{"ringing" => []} = await_call(alice, "dmr7", "CALL_UPDATE")
+      assert %{"ringing" => []} = await_call(bob, "dmr7", "CALL_UPDATE")
+
+      send_frame(alice.session, 26, %{"channel_id" => "dmr7", "user_ids" => ["3", "2", "9"]})
+
+      assert %{"ringing" => ["3"], "voice_states" => [%{"user_id" => "2"}]} =
+               await_call(bob, "dmr7", "CALL_UPDATE")
+    end
+
+    test "only a participant of the running call can ring, and not users already in it" do
+      {alice, bob} = dm_ring_setup("dmr8")
+      send_frame(alice.session, 26, %{"channel_id" => "dmr8", "user_ids" => ["3"]})
+      assert :none = await_call(bob, "dmr8", "CALL_CREATE")
+
+      dm_voice(alice, "dmr8")
+      assert %{"ringing" => ["3"]} = await_call(bob, "dmr8", "CALL_CREATE")
+      send_frame(bob.session, 25, %{"channel_id" => "dmr8"})
+      assert %{"ringing" => []} = await_call(alice, "dmr8", "CALL_UPDATE")
+
+      send_frame(bob.session, 26, %{"channel_id" => "dmr8", "user_ids" => ["2"]})
+      assert :none = await_call(alice, "dmr8", "CALL_UPDATE")
     end
 
     test "a dropped connection leaves the call after the voice grace, before the resume window" do

@@ -10,6 +10,7 @@ config :discordy_gateway, DiscordyGateway.Interface.Endpoint, server: false, htt
 config :discordy_gateway, :ports,
   token_verifier: DiscordyGateway.Fakes.TokenVerifier,
   api_client: DiscordyGateway.Fakes.ApiClient,
+  messages_client: DiscordyGateway.Fakes.MessagesClient,
   resume_store: DiscordyGateway.Fakes.ResumeStore,
   presence_store: DiscordyGateway.Fakes.PresenceStore,
   call_defaults: DiscordyGateway.Fakes.CallDefaults,

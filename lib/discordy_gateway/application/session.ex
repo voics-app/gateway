@@ -291,6 +291,11 @@ defmodule DiscordyGateway.Application.Session do
     state
   end
 
+  defp identified_command(:call_ring, %{channel_id: channel_id, user_ids: user_ids}, state) do
+    _ = DmCall.ring(channel_id, state.identity.user_id, user_ids)
+    state
+  end
+
   # E2EE envelopes and P2P signals must reach recipients in the order the client sent them (a
   # welcome before the messages of its group, an offer before its ICE candidates), so they run one
   # after another on a worker owned by this session instead of on a task each.
@@ -474,7 +479,7 @@ defmodule DiscordyGateway.Application.Session do
   defp user_event(state, %EventEnvelope{type: type, data: data}) do
     if Intents.allows?(state.identity.intents, type, :direct) do
       state = dispatch(state, type, Dispatch.encode(data))
-      follow_membership(state, type, data)
+      state |> follow_membership(type, data) |> follow_relationship(type, data)
     else
       state
     end
@@ -488,6 +493,33 @@ defmodule DiscordyGateway.Application.Session do
     do: leave_guild(state, guild_id)
 
   defp follow_membership(state, _type, _data), do: state
+
+  # A new friend's presence is not in READY: hand over their current presence and track them so
+  # their later changes reach this session. Any other relationship (or a removal) stops tracking.
+  defp follow_relationship(state, "RELATIONSHIP_ADD", relationship) when is_map(relationship) do
+    id = Ready.relationship_user_id(relationship)
+
+    cond do
+      not is_binary(id) -> state
+      Ready.friend?(relationship) -> befriend(state, id)
+      true -> unfriend(state, id)
+    end
+  end
+
+  defp follow_relationship(state, "RELATIONSHIP_REMOVE", %{"id" => id}) when is_binary(id),
+    do: unfriend(state, id)
+
+  defp follow_relationship(state, _type, _data), do: state
+
+  defp befriend(state, id) do
+    state = %{state | friend_ids: Enum.uniq([id | state.friend_ids])}
+
+    Enum.reduce(Publisher.friend_payloads([id]), state, fn payload, acc ->
+      dispatch(acc, "PRESENCE_UPDATE", Dispatch.encode(payload))
+    end)
+  end
+
+  defp unfriend(state, id), do: %{state | friend_ids: List.delete(state.friend_ids, id)}
 
   ## Guild subscriptions
 

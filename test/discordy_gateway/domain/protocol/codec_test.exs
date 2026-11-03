@@ -76,15 +76,43 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
   describe "op 3 PRESENCE_UPDATE" do
     test "decodes statuses" do
       for status <- ~w(online idle dnd invisible) do
-        d = %{"status" => status, "activities" => [%{"name" => "x"}], "afk" => true}
+        d = %{"status" => status, "activities" => [%{"name" => "x", "type" => 0}], "afk" => true}
         assert {:ok, {:presence_update, p}} = Codec.decode_inbound(frame(3, d))
-        assert p == %{status: status, activities: [%{"name" => "x"}], afk: true}
+        assert p == %{status: status, activities: [%{"name" => "x", "type" => 0}], afk: true}
       end
     end
 
     test "rejects unknown statuses" do
       assert Codec.decode_inbound(frame(3, %{"status" => "away", "activities" => []})) ==
                {:error, 4002}
+    end
+  end
+
+  test "decodes call ring with unique targets and rejects empty or oversized lists" do
+    assert {:ok, {:call_ring, %{channel_id: "c", user_ids: ["1", "2"]}}} =
+             Codec.decode_inbound(frame(26, %{"channel_id" => "c", "user_ids" => ~w(1 2 1)}))
+
+    assert Codec.decode_inbound(frame(26, %{"channel_id" => "c", "user_ids" => []})) ==
+             {:error, 4002}
+
+    many = Enum.map(1..11, &Integer.to_string/1)
+
+    assert Codec.decode_inbound(frame(26, %{"channel_id" => "c", "user_ids" => many})) ==
+             {:error, 4002}
+  end
+
+  describe "op 3 activity validation" do
+    test "sanitises activities and rejects oversized ones with 4002" do
+      d = %{"status" => "online", "afk" => false}
+      activity = %{"name" => "x", "type" => 0, "junk" => 1}
+
+      assert {:ok, {:presence_update, p}} =
+               Codec.decode_inbound(frame(3, Map.put(d, "activities", [activity])))
+
+      assert p.activities == [%{"name" => "x", "type" => 0}]
+
+      too_long = [%{"name" => "x", "type" => 4, "state" => String.duplicate("a", 129)}]
+      assert Codec.decode_inbound(frame(3, Map.put(d, "activities", too_long))) == {:error, 4002}
     end
   end
 

@@ -3,12 +3,15 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
 
   import DiscordyGateway.Domain.Protocol.Validate
 
+  alias DiscordyGateway.Domain.Activities
+
   @statuses ~w(online idle dnd invisible)
   @content_types ~w(application commit welcome proposal)
   @signal_kinds ~w(offer answer ice bye)
   @watch_actions ~w(load play pause seek)
   @max_recipients 1_000
   @max_ack_ids 1_000
+  @max_ring_targets 10
 
   @spec decode(atom(), term()) :: {:ok, term()} | {:error, term()}
   def decode(:heartbeat, seq) when is_integer(seq) or is_nil(seq), do: {:ok, seq}
@@ -164,6 +167,14 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
     end
   end
 
+  defp decode_map(:call_ring, d) do
+    with {:ok, channel_id} <- string(d, "channel_id"),
+         {:ok, user_ids} <- string_list(d, "user_ids", :required),
+         :ok <- max_length(user_ids, @max_ring_targets) do
+      {:ok, %{channel_id: channel_id, user_ids: Enum.uniq(user_ids)}}
+    end
+  end
+
   defp intents(d) do
     case Map.get(d, "intents", 0) do
       intents when is_integer(intents) -> {:ok, intents}
@@ -213,12 +224,9 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
   end
 
   defp activities(d) do
-    case Map.get(d, "activities", []) do
-      list when is_list(list) ->
-        if Enum.all?(list, &is_map/1), do: {:ok, list}, else: {:error, {:invalid, "activities"}}
-
-      _ ->
-        {:error, {:invalid, "activities"}}
+    case Activities.sanitize(Map.get(d, "activities", [])) do
+      {:ok, activities} -> {:ok, activities}
+      {:error, _reason} -> {:error, {:invalid, "activities"}}
     end
   end
 

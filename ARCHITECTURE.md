@@ -84,7 +84,9 @@ flowchart LR
   subscribers (monitored), voice `Room`, and idles out five minutes after the last subscriber
   leaves. Sessions monitor it and re-join if it crashes.
 - **DmCall**: the same voice role for DM channels, started on the first join, stopped when the
-  call empties.
+  call empties. It mirrors the call into a type 3 system message through `CallRecorder`: posted
+  when the call starts, participants updated as they join, `ended_timestamp` stamped when it ends
+  (messages internal API, best effort, never blocks or breaks the call).
 - **Events**: one brod group subscriber per topic, shared by all nodes (`discordy-gateway.<topic>`),
   so each record is processed once cluster-wide and routed through the cluster-wide directories.
   `Deduplicator` makes routing idempotent on the envelope id.
@@ -98,7 +100,10 @@ flowchart LR
 intents allow it in a DM context). Otherwise `guild_id` present: the guild process fans out to
 members that pass the intents check and, for channel events, VIEW_CHANNEL on the channel
 (threads inherit their parent's overwrites). Bots without MESSAGE_CONTENT receive stripped
-message events unless they are the author or are mentioned. `GUILD_MEMBER_ADD` also makes the
+message events unless they are the author or are mentioned. A MESSAGE_CREATE with
+`mention_here` (`@here` only, set by messages) reaches every member who passes the filters, but members whose
+aggregated presence is offline get a copy with `mention_everyone` false and no `mention_here`, so only online
+members are pinged; `@everyone` is unchanged. `GUILD_MEMBER_ADD` also makes the
 new member's online sessions join the guild; `GUILD_MEMBER_REMOVE` and `GUILD_DELETE` tell the
 affected sessions with `GUILD_DELETE`. `INTERACTION_CREATE` goes to the sessions of the
 application's bot user.

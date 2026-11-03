@@ -11,10 +11,13 @@ RUN mix local.hex --force && mix local.rebar --force
 COPY mix.exs mix.lock ./
 RUN --mount=type=cache,target=/root/.hex/packages \
     mix deps.get --only prod
-COPY config config
+# Dependencies compile against the compile-time config only; runtime.exs is read at boot, so changing it must
+# not recompile every dependency.
+COPY config/config.exs config/prod.exs config/
 RUN mix deps.compile
 COPY lib lib
 COPY rel rel
+COPY config/runtime.exs config/
 RUN mix release
 
 FROM ${RUNTIME_IMAGE} AS runtime
