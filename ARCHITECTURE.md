@@ -98,7 +98,10 @@ flowchart LR
 intents allow it in a DM context). Otherwise `guild_id` present: the guild process fans out to
 members that pass the intents check and, for channel events, VIEW_CHANNEL on the channel
 (threads inherit their parent's overwrites). Bots without MESSAGE_CONTENT receive stripped
-message events unless they are the author or are mentioned. `GUILD_MEMBER_ADD` also makes the
+message events unless they are the author or are mentioned. A MESSAGE_CREATE with
+`mention_here` (`@here` only, set by messages) reaches every member who passes the filters, but members whose
+aggregated presence is offline get a copy with `mention_everyone` false and no `mention_here`, so only online
+members are pinged; `@everyone` is unchanged. `GUILD_MEMBER_ADD` also makes the
 new member's online sessions join the guild; `GUILD_MEMBER_REMOVE` and `GUILD_DELETE` tell the
 affected sessions with `GUILD_DELETE`. `INTERACTION_CREATE` goes to the sessions of the
 application's bot user.

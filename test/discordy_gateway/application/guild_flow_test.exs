@@ -294,6 +294,50 @@ defmodule DiscordyGateway.Application.GuildFlowTest do
     end
   end
 
+  describe "@here notifies online members only (gateway#39)" do
+    setup do
+      setup_guild("g40", ~w(2 3))
+      online_member = online_in("g40", "2")
+      hidden_member = online_in("g40", "3")
+
+      send_frame(hidden_member.session, 3, %{
+        "status" => "invisible",
+        "activities" => [],
+        "afk" => false
+      })
+
+      assert await_presence(online_member, "3", "offline")
+      %{online: online_member, hidden: hidden_member}
+    end
+
+    defp broadcast(flags) do
+      data = Map.merge(%{"id" => "m1", "channel_id" => "10", "content" => "hi"}, flags)
+      publish(:message, "MESSAGE_CREATE", data, %{"guild_id" => "g40", "channel_id" => "10"})
+    end
+
+    test "offline members still get the message, without the broadcast flags", ctx do
+      broadcast(%{
+        "mention_everyone" => true,
+        "mention_here" => true,
+        "mentions" => [%{"id" => "3"}]
+      })
+
+      assert %{"mention_everyone" => true, "mention_here" => true} =
+               await(ctx.online, "MESSAGE_CREATE")
+
+      quiet = await(ctx.hidden, "MESSAGE_CREATE")
+      assert %{"id" => "m1", "mention_everyone" => false, "mentions" => [%{"id" => "3"}]} = quiet
+      refute Map.has_key?(quiet, "mention_here")
+    end
+
+    test "@everyone still reaches every member", ctx do
+      broadcast(%{"mention_everyone" => true})
+
+      assert %{"mention_everyone" => true} = await(ctx.online, "MESSAGE_CREATE")
+      assert %{"mention_everyone" => true} = await(ctx.hidden, "MESSAGE_CREATE")
+    end
+  end
+
   describe "REQUEST_GUILD_MEMBERS" do
     test "answers with chunks for a query and for explicit ids" do
       setup_guild("g30")

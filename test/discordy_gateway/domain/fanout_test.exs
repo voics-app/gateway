@@ -141,6 +141,27 @@ defmodule DiscordyGateway.Domain.FanoutTest do
     assert plan == []
   end
 
+  test "here_only?/2 only holds for MESSAGE_CREATE with mention_here" do
+    assert Fanout.here_only?("MESSAGE_CREATE", %{"mention_here" => true})
+    refute Fanout.here_only?("MESSAGE_CREATE", %{"mention_everyone" => true})
+    refute Fanout.here_only?("MESSAGE_UPDATE", %{"mention_here" => true})
+  end
+
+  test "quiet_here/1 clears the broadcast flags and keeps user mentions" do
+    data = %{"mention_everyone" => true, "mention_here" => true, "mentions" => [%{"id" => "2"}]}
+
+    assert Fanout.quiet_here(data) == %{
+             "mention_everyone" => false,
+             "mentions" => [%{"id" => "2"}]
+           }
+  end
+
+  test "here_audience?/1 excludes offline and unknown presence" do
+    refute Fanout.here_audience?(nil)
+    refute Fanout.here_audience?(%{status: "offline"})
+    for status <- ~w(online idle dnd), do: assert(Fanout.here_audience?(%{status: status}))
+  end
+
   test "strip_content/1 empties content-bearing fields" do
     data = %{
       "content" => "x",

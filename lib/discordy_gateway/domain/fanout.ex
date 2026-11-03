@@ -28,6 +28,27 @@ defmodule DiscordyGateway.Domain.Fanout do
     end
   end
 
+  @doc """
+  True for a MESSAGE_CREATE whose only broadcast tag is `@here` (messages sets `mention_here`).
+  Such a message pings online members only; `@everyone` messages never carry the flag.
+  """
+  @spec here_only?(String.t(), map()) :: boolean()
+  def here_only?("MESSAGE_CREATE", %{"mention_here" => true}), do: true
+  def here_only?(_event, _data), do: false
+
+  @doc """
+  The copy of a `mention_here` message for members who must not be pinged by it: the broadcast
+  flags are cleared, explicit user mentions stay.
+  """
+  @spec quiet_here(map()) :: map()
+  def quiet_here(data),
+    do: data |> Map.put("mention_everyone", false) |> Map.delete("mention_here")
+
+  @doc "Whether the aggregated presence (nil when unknown) counts as online for `@here`."
+  @spec here_audience?(map() | nil) :: boolean()
+  def here_audience?(nil), do: false
+  def here_audience?(%{status: status}), do: status != "offline"
+
   @doc "Removes message content fields for bots without the MESSAGE_CONTENT intent."
   @spec strip_content(map()) :: map()
   def strip_content(data) do
