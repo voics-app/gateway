@@ -7,7 +7,8 @@ defmodule DiscordyGateway.Application.DmCall do
 
   Ringing: the first join creates the call (CALL_CREATE to the recipients) and rings every other
   recipient. A ringing user stops ringing when they join, decline (op 25) or after the ring
-  timeout. Later changes send CALL_UPDATE; the last leave sends CALL_DELETE.
+  timeout. A participant can ring further recipients later (op 26). Later changes send CALL_UPDATE;
+  the last leave sends CALL_DELETE.
   """
 
   use GenServer, restart: :temporary
@@ -64,6 +65,19 @@ defmodule DiscordyGateway.Application.DmCall do
   def decline(channel_id, user_id) do
     case Ports.server_directory().lookup({:dm_call, channel_id}) do
       {:ok, pid} -> GenServer.cast(pid, {:decline, user_id})
+      :error -> :ok
+    end
+  end
+
+  @doc """
+  A participant rings more recipients of the running call of `channel_id`. Users who are not
+  recipients or are already in the call are ignored; a no-op when the caller is not in the call
+  or no call runs.
+  """
+  @spec ring(String.t(), String.t(), [String.t()]) :: :ok
+  def ring(channel_id, caller_id, user_ids) do
+    case Ports.server_directory().lookup({:dm_call, channel_id}) do
+      {:ok, pid} -> GenServer.cast(pid, {:ring, caller_id, user_ids})
       :error -> :ok
     end
   end
@@ -131,6 +145,19 @@ defmodule DiscordyGateway.Application.DmCall do
   def handle_cast({:decline, user_id}, state) do
     before = call_of(state)
     finish(%{state | ringing: drop_ringer(state.ringing, user_id)}, before, [])
+  end
+
+  def handle_cast({:ring, caller_id, user_ids}, state) do
+    if caller_id in participant_ids(state) do
+      before = call_of(state)
+
+      targets =
+        Enum.filter(user_ids, &(&1 in state.recipients and &1 not in participant_ids(state)))
+
+      finish(ring(state, targets), before, [])
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_cast({:announce, user_id, session_pid}, state) do
@@ -217,13 +244,17 @@ defmodule DiscordyGateway.Application.DmCall do
     |> Enum.uniq()
   end
 
-  defp ring(state) do
+  defp ring(state), do: ring(state, state.recipients -- participant_ids(state))
+
+  # Starts (or restarts) the ring timeout of every target.
+  defp ring(state, targets) do
     timeout = Application.get_env(:discordy_gateway, :ring_timeout_ms, @default_ring_timeout_ms)
 
     ringing =
-      for user_id <- state.recipients -- participant_ids(state), into: %{} do
-        {user_id, Process.send_after(self(), {:ring_timeout, user_id}, timeout)}
-      end
+      Enum.reduce(targets, state.ringing, fn user_id, ringing ->
+        timer = Process.send_after(self(), {:ring_timeout, user_id}, timeout)
+        ringing |> drop_ringer(user_id) |> Map.put(user_id, timer)
+      end)
 
     %{state | ringing: ringing}
   end

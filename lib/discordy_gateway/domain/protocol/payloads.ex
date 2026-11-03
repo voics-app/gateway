@@ -11,6 +11,7 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
   @watch_actions ~w(load play pause seek)
   @max_recipients 1_000
   @max_ack_ids 1_000
+  @max_ring_targets 10
 
   @spec decode(atom(), term()) :: {:ok, term()} | {:error, term()}
   def decode(:heartbeat, seq) when is_integer(seq) or is_nil(seq), do: {:ok, seq}
@@ -163,6 +164,14 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
   defp decode_map(:call_decline, d) do
     with {:ok, channel_id} <- string(d, "channel_id") do
       {:ok, %{channel_id: channel_id}}
+    end
+  end
+
+  defp decode_map(:call_ring, d) do
+    with {:ok, channel_id} <- string(d, "channel_id"),
+         {:ok, user_ids} <- string_list(d, "user_ids", :required),
+         :ok <- max_length(user_ids, @max_ring_targets) do
+      {:ok, %{channel_id: channel_id, user_ids: Enum.uniq(user_ids)}}
     end
   end
 

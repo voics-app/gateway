@@ -291,6 +291,11 @@ defmodule DiscordyGateway.Application.Session do
     state
   end
 
+  defp identified_command(:call_ring, %{channel_id: channel_id, user_ids: user_ids}, state) do
+    _ = DmCall.ring(channel_id, state.identity.user_id, user_ids)
+    state
+  end
+
   # E2EE envelopes and P2P signals must reach recipients in the order the client sent them (a
   # welcome before the messages of its group, an offer before its ICE candidates), so they run one
   # after another on a worker owned by this session instead of on a task each.
