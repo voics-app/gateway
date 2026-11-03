@@ -3,6 +3,8 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
 
   import DiscordyGateway.Domain.Protocol.Validate
 
+  alias DiscordyGateway.Domain.Activities
+
   @statuses ~w(online idle dnd invisible)
   @content_types ~w(application commit welcome proposal)
   @signal_kinds ~w(offer answer ice bye)
@@ -222,12 +224,9 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
   end
 
   defp activities(d) do
-    case Map.get(d, "activities", []) do
-      list when is_list(list) ->
-        if Enum.all?(list, &is_map/1), do: {:ok, list}, else: {:error, {:invalid, "activities"}}
-
-      _ ->
-        {:error, {:invalid, "activities"}}
+    case Activities.sanitize(Map.get(d, "activities", [])) do
+      {:ok, activities} -> {:ok, activities}
+      {:error, _reason} -> {:error, {:invalid, "activities"}}
     end
   end
 
