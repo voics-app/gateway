@@ -323,9 +323,34 @@ defmodule DiscordyGateway.Application.Guild do
         System.os_time(:millisecond)
       )
 
-    {full, stripped} = Enum.split_with(plan, fn {_pid, variant} -> variant == :full end)
-    Dispatch.to_sessions(Enum.map(full, &elem(&1, 0)), event, data)
-    Dispatch.to_sessions(Enum.map(stripped, &elem(&1, 0)), event, Fanout.strip_content(data))
+    quiet = quiet_pids(state, plan, event, data)
+
+    plan
+    |> Enum.group_by(fn {pid, variant} -> {variant, MapSet.member?(quiet, pid)} end, &elem(&1, 0))
+    |> Enum.each(fn {{variant, quiet?}, pids} ->
+      Dispatch.to_sessions(pids, event, variant_payload(data, variant, quiet?))
+    end)
+  end
+
+  defp variant_payload(data, variant, quiet?) do
+    data = if variant == :stripped, do: Fanout.strip_content(data), else: data
+    if quiet?, do: Fanout.quiet_here(data), else: data
+  end
+
+  # An @here message pings online members only: sessions of users whose aggregated presence is
+  # offline (or unknown) still get the message, without the broadcast flags.
+  defp quiet_pids(state, plan, event, data) do
+    if Fanout.here_only?(event, data) and plan != [] do
+      users = Map.new(plan, fn {pid, _variant} -> {pid, state.subs[pid].sub.user_id} end)
+      aggregates = users |> Map.values() |> Enum.uniq() |> Ports.presence_store().get_aggregates()
+
+      for {pid, user_id} <- users,
+          not Fanout.here_audience?(aggregates[user_id]),
+          into: MapSet.new(),
+          do: pid
+    else
+      MapSet.new()
+    end
   end
 
   ## Voice
