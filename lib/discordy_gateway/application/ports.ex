@@ -8,6 +8,8 @@ defmodule DiscordyGateway.Application.Ports do
   def token_verifier, do: fetch(:token_verifier)
   @spec api_client() :: module()
   def api_client, do: fetch(:api_client)
+  @spec messages_client() :: module()
+  def messages_client, do: fetch(:messages_client)
   @spec resume_store() :: module()
   def resume_store, do: fetch(:resume_store)
   @spec presence_store() :: module()

@@ -84,7 +84,9 @@ flowchart LR
   subscribers (monitored), voice `Room`, and idles out five minutes after the last subscriber
   leaves. Sessions monitor it and re-join if it crashes.
 - **DmCall**: the same voice role for DM channels, started on the first join, stopped when the
-  call empties.
+  call empties. It mirrors the call into a type 3 system message through `CallRecorder`: posted
+  when the call starts, participants updated as they join, `ended_timestamp` stamped when it ends
+  (messages internal API, best effort, never blocks or breaks the call).
 - **Events**: one brod group subscriber per topic, shared by all nodes (`discordy-gateway.<topic>`),
   so each record is processed once cluster-wide and routed through the cluster-wide directories.
   `Deduplicator` makes routing idempotent on the envelope id.
