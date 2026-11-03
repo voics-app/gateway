@@ -14,7 +14,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the structure and the C4 diagram.
 | Sessions | HELLO, IDENTIFY (EdDSA user JWT, or bot token via api introspection), READY from the api, heartbeat supervision, 120 sends / 60 s rate limit (close 4008), RESUME from the Valkey buffer within 120 s |
 | Guild processes | One cluster-wide process per guild (Horde), loaded lazily from `/guilds/{id}/state`, kept current from `discordy.guild.v1`; fan-out filtered by membership, intents and VIEW_CHANNEL with the Discord permission algorithm |
 | Event consumers | One brod consumer group per topic (`discordy-gateway.<topic>`), P6 routing, idempotent on envelope `id` (LRU of the last 10k ids per node) |
-| Presence | Aggregated across a user's sessions (dnd > online > idle, invisible reads as offline), fanned out to guilds and friends |
+| Presence | Aggregated across a user's sessions (dnd > online > idle, invisible reads as offline), fanned out to guilds and friends. Client activities are sanitised (max 5, one custom status, text fields 128 characters, unknown fields dropped); an invalid activity closes the session with 4002 |
 | Voice | Least-loaded node of the region from etcd (P8), allocation in Valkey `voice:alloc:<id>`, one node per guild or DM call, reallocation when a node leaves etcd, `VOICE_SERVER_UPDATE` with an HS256 token, drain and undrain |
 | E2EE relay | Op 20/21: per-device Valkey streams, ACK deletes, 7-day TTL sweeper, replay after READY |
 | P2P | Op 22 relayed to online devices only; offline peers get `P2P_SIGNAL_FAILED {"error":"peer_offline"}`. READY carries short-lived TURN credentials (coturn REST scheme) built from `TURN_STATIC_AUTH_SECRET` and `TURN_URLS` |
