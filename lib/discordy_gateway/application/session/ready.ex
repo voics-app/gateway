@@ -39,10 +39,19 @@ defmodule DiscordyGateway.Application.Session.Ready do
   @spec friend_ids(map()) :: [String.t()]
   def friend_ids(ready) do
     for %{"type" => @friend_type} = relationship <- List.wrap(ready["relationships"]),
-        id = relationship["id"] || get_in(relationship, ["user", "id"]),
+        id = relationship_user_id(relationship),
         is_binary(id),
         do: id
   end
+
+  @doc "Id of the other user in a relationship payload (READY entry or RELATIONSHIP_ADD)."
+  @spec relationship_user_id(map()) :: String.t() | nil
+  def relationship_user_id(relationship),
+    do: relationship["id"] || get_in(relationship, ["user", "id"])
+
+  @doc "Whether a relationship payload is an accepted friendship."
+  @spec friend?(map()) :: boolean()
+  def friend?(relationship), do: relationship["type"] == @friend_type
 
   defp put_application(payload, %Identity{kind: :bot, application_id: id}) when is_binary(id),
     do: Map.put(payload, "application", %{"id" => id})
