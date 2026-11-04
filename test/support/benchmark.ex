@@ -208,7 +208,7 @@ defmodule DiscordyGateway.Benchmark do
   end
 
   defp latency(frame) do
-    [_, sent] = Regex.run(~r/"content":"t=(\d+) /, frame)
+    [_, sent] = Regex.run(~r/t=(-?\d+) x/, frame)
     System.monotonic_time(:microsecond) - String.to_integer(sent)
   end
 end
