@@ -20,6 +20,26 @@ defmodule DiscordyGateway.Infrastructure.Kafka.TopicConsumer do
 
   @consumed_topics [:guild, :message, :user, :interaction, :audit]
 
+  # brod's defaults (max_wait_time 10 s, sleep_timeout 1 s) are tuned for throughput, not delivery
+  # latency: measured against Redpanda they put a ~450 ms p50 / ~860 ms p95 floor under every
+  # realtime event (gateway#45). `max_wait_time` is a long poll: a record that arrives mid-poll is
+  # returned at once, so a short value costs idle CPU (one fetch per partition per interval) and
+  # buys nothing; 500 ms measured the same latency as 100 ms at a third of the idle CPU.
+  # `sleep_timeout` paces retries after a failed or empty fetch. `min_bytes: 1` returns on the
+  # first byte.
+  @consumer_config [
+    begin_offset: :latest,
+    max_wait_time: 500,
+    sleep_timeout: 20,
+    min_bytes: 1,
+    prefetch_count: 50,
+    prefetch_bytes: 1_048_576
+  ]
+
+  @doc "brod consumer settings of every topic subscriber."
+  @spec consumer_config() :: keyword()
+  def consumer_config, do: @consumer_config
+
   @doc "Topics the gateway consumes, as `{topic_atom, topic_name}`."
   @spec topics() :: [{atom(), String.t()}]
   def topics, do: Enum.map(@consumed_topics, &{&1, Contracts.topic(&1)})
@@ -34,7 +54,7 @@ defmodule DiscordyGateway.Infrastructure.Kafka.TopicConsumer do
       cb_module: __MODULE__,
       init_data: atom,
       message_type: :message,
-      consumer_config: [begin_offset: :latest],
+      consumer_config: @consumer_config,
       group_config: [offset_commit_policy: :commit_to_kafka_v2, offset_commit_interval_seconds: 5]
     }
 

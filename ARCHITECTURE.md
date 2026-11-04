@@ -89,6 +89,8 @@ flowchart LR
   (messages internal API, best effort, never blocks or breaks the call).
 - **Events**: one brod group subscriber per topic, shared by all nodes (`discordy-gateway.<topic>`),
   so each record is processed once cluster-wide and routed through the cluster-wide directories.
+  Consumers long-poll with `max_wait_time` 500 ms and `sleep_timeout` 20 ms (`TopicConsumer.consumer_config/0`);
+  brod's defaults (10 s / 1 s) added ~450 ms p50 / ~860 ms p95 to every delivery (gateway#45).
   `Deduplicator` makes routing idempotent on the envelope id.
 - **Voice.NodeMonitor** diffs the etcd view every two seconds and tells every local guild and
   call process when a node vanished, so they reallocate and re-send `VOICE_SERVER_UPDATE`.
