@@ -90,7 +90,7 @@ flowchart LR
   users instead of the container being OOM-killed with everyone connected. Metrics:
   `discordy_gateway_admission_sample_memory_bytes`, `_memory_limit_bytes`, `_closed` and
   `discordy_gateway_admission_refused_count`.
-  The Valkey write is not on the session path and has its own two connections, so event dedup never waits behind a batch: `ResumeWriter` (4 processes, a session always maps to the
+  The Valkey write is not on the session path and has its own two connections, so short Valkey calls never wait behind a batch: `ResumeWriter` (4 processes, a session always maps to the
   same one) collects the entries that arrived while the previous batch was in flight and writes them as
   one pipeline; `fetch` and `delete` wait for the session's pending entries first. A socket whose
   mailbox holds more than `TRANSPORT_BACKLOG_LIMIT` frames (checked every 32nd frame) is killed by its
