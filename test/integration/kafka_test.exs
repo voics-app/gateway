@@ -149,4 +149,31 @@ defmodule DiscordyGateway.Integration.KafkaTest do
     assert %{"username" => "once"} = await(user, "USER_UPDATE", 20_000)
     assert await(user, "USER_UPDATE", 1_000) == :none
   end
+
+  test "delivery from publish to the user's session stays well under the old 1 s polling floor" do
+    Fakes.put({:ready, "33"}, {:ok, %{"user" => %{"id" => "33"}, "guilds" => []}})
+    user = online("33")
+
+    latencies =
+      for n <- 1..20 do
+        started = System.monotonic_time(:millisecond)
+
+        :ok =
+          Publisher.publish(
+            Contracts.topic(:user),
+            "33",
+            envelope("USER_UPDATE", %{"id" => "33", "username" => "lat#{n}"}, %{
+              "target_user_ids" => ["33"]
+            })
+          )
+
+        assert %{"username" => "lat" <> _} = await(user, "USER_UPDATE", 5_000)
+        Process.sleep(50)
+        System.monotonic_time(:millisecond) - started - 50
+      end
+
+    sorted = Enum.sort(latencies)
+    assert Enum.at(sorted, 9) < 100, "p50 #{Enum.at(sorted, 9)} ms: #{inspect(sorted)}"
+    assert Enum.at(sorted, 18) < 250, "p95 #{Enum.at(sorted, 18)} ms: #{inspect(sorted)}"
+  end
 end
