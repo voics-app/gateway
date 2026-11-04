@@ -44,6 +44,14 @@ defmodule DiscordyGateway.Application.Settings do
   @spec e2ee_settings_wait_interval_ms() :: non_neg_integer()
   def e2ee_settings_wait_interval_ms, do: get(:e2ee_settings_wait_interval_ms, 1_000)
 
+  @doc "Share of the memory limit at which new connections are refused (`4015`)."
+  @spec admission_memory_fraction() :: float()
+  def admission_memory_fraction, do: get(:admission_memory_fraction, 0.75)
+
+  @doc "How often the memory probe is sampled for admission control."
+  @spec admission_interval_ms() :: pos_integer()
+  def admission_interval_ms, do: get(:admission_interval_ms, 1_000)
+
   @doc """
   Frames a socket process may have queued before the session cuts the connection as a slow
   consumer (the client resumes).

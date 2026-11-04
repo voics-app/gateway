@@ -80,6 +80,16 @@ flowchart LR
   RESUME from a new connection starts a short-lived stub session that calls the original
   session (`{:resume, ...}`, cluster-wide through `:pg`), which re-attaches the new transport,
   replays the missed frames and then sends RESUMED. The stub forwards later frames to it.
+  Payloads are encoded once into one binary that all recipients share (a message carrying iodata
+  is copied onto every receiver heap; a 200-member GUILD_CREATE cost about 300 KiB per session that
+  way), sessions hibernate after GUILD_CREATE and run with `fullsweep_after` 10, and so does the
+  socket process, so large frames do not stay pinned in an idle heap.
+- **Admission** samples the VM memory once a second and closes the gate at `ADMISSION_MEMORY_FRACTION`
+  of the limit (5 points hysteresis). While it is closed the socket answers every new connection with
+  close code 4015 `SERVER_OVERLOADED` (retryable) before a session starts, so overload refuses new
+  users instead of the container being OOM-killed with everyone connected. Metrics:
+  `discordy_gateway_admission_sample_memory_bytes`, `_memory_limit_bytes`, `_closed` and
+  `discordy_gateway_admission_refused_count`.
   The Valkey write is not on the session path: `ResumeWriter` (4 processes, a session always maps to the
   same one) collects the entries that arrived while the previous batch was in flight and writes them as
   one pipeline; `fetch` and `delete` wait for the session's pending entries first. A socket whose

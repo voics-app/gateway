@@ -21,7 +21,8 @@ config :discordy_gateway, :ports,
   voice_token_signer: DiscordyGateway.Infrastructure.Auth.Hs256VoiceTokenSigner,
   turn_credentials: DiscordyGateway.Infrastructure.Auth.CoturnCredentials,
   session_directory: DiscordyGateway.Infrastructure.Cluster.PgSessionDirectory,
-  server_directory: DiscordyGateway.Infrastructure.Cluster.HordeServerDirectory
+  server_directory: DiscordyGateway.Infrastructure.Cluster.HordeServerDirectory,
+  memory_probe: DiscordyGateway.Infrastructure.Runtime.MemoryProbe
 
 config :phoenix, :json_library, Jason
 

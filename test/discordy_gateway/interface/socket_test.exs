@@ -1,6 +1,8 @@
 defmodule DiscordyGateway.Interface.SocketTest do
   use DiscordyGateway.Case, async: false
 
+  alias DiscordyGateway.Application.Admission
+  alias DiscordyGateway.Fakes.MemoryProbe
   alias DiscordyGateway.Interface.Router
 
   setup do
@@ -76,6 +78,21 @@ defmodule DiscordyGateway.Interface.SocketTest do
     )
 
     assert {:close, 4003} = recv(conn)
+  end
+
+  test "refuses a connection with the retryable close code 4015 while memory is short", %{
+    conn: conn
+  } do
+    MemoryProbe.put(900, 1_000)
+    Admission.sample()
+
+    on_exit(fn ->
+      MemoryProbe.reset()
+      Admission.sample()
+    end)
+
+    assert {:ok, _stream} = upgrade(conn)
+    assert {:close, 4015} = recv(conn)
   end
 
   test "rejects unsupported versions", %{conn: conn} do

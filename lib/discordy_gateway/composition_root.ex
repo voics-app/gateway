@@ -7,6 +7,7 @@ defmodule DiscordyGateway.CompositionRoot do
 
   use Application
 
+  alias DiscordyGateway.Application.Admission
   alias DiscordyGateway.Application.Events.Deduplicator
   alias DiscordyGateway.Application.Relay.InboxSweeper
   alias DiscordyGateway.Application.UsageTicker
@@ -47,6 +48,8 @@ defmodule DiscordyGateway.CompositionRoot do
       public_gateway_url: config.public_gateway_url,
       e2ee_settings_unavailable_policy: config.e2ee_settings_unavailable_policy,
       voice_detach_grace_ms: config.voice_detach_grace_ms,
+      admission_memory_fraction: config.admission_memory_fraction,
+      memory_limit_bytes: config.memory_limit_bytes,
       transport_backlog_limit: config.transport_backlog_limit
     )
 
@@ -80,7 +83,8 @@ defmodule DiscordyGateway.CompositionRoot do
       %{id: :pg, start: {:pg, :start_link, [DiscordyGateway.Pg]}},
       {Task.Supervisor, name: DiscordyGateway.TaskSupervisor},
       {DynamicSupervisor, name: DiscordyGateway.SessionSupervisor, strategy: :one_for_one},
-      Deduplicator
+      Deduplicator,
+      Admission
     ] ++ HordeServerDirectory.children() ++ [Metrics.reporter()]
   end
 

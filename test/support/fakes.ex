@@ -350,3 +350,25 @@ defmodule DiscordyGateway.Fakes.MessagesClient do
     if Fakes.get(:messages_client_failing, false), do: {:error, :unavailable}, else: :ok
   end
 end
+
+defmodule DiscordyGateway.Fakes.MemoryProbe do
+  @moduledoc """
+  Memory probe whose reading a test sets with `put/2`. It reads the application environment, not
+  the fakes table, because the admission process samples it while the application boots.
+  """
+  @behaviour DiscordyGateway.Application.Ports.MemoryProbe
+
+  @doc "Sets the reading; a `nil` limit means no limit is known."
+  def put(used, limit), do: Application.put_env(:discordy_gateway, :fake_memory, {used, limit})
+
+  @doc "Back to an unknown limit."
+  def reset, do: Application.delete_env(:discordy_gateway, :fake_memory)
+
+  @impl true
+  def used_bytes, do: elem(reading(), 0)
+
+  @impl true
+  def limit_bytes, do: elem(reading(), 1)
+
+  defp reading, do: Application.get_env(:discordy_gateway, :fake_memory, {0, nil})
+end
