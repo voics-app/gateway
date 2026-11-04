@@ -4,8 +4,8 @@ defmodule DiscordyGateway.Infrastructure.Valkey.Pool do
   connection, so a handful of connections is plenty; callers are spread round-robin.
 
   Bulk writes get their own connections: Redix answers in order, so a short command behind a
-  large batch on the same connection waits for the whole batch. The event path (dedup) must not
-  wait for resume buffer writes.
+  large batch on the same connection waits for the whole batch, so presence and other short
+  calls must not share a connection with resume buffer writes.
   """
 
   use Supervisor
