@@ -61,6 +61,31 @@ defmodule DiscordyGateway.Infrastructure.ConfigTest do
     assert "E2EE_SETTINGS_UNAVAILABLE_POLICY must be one of open, closed, wait" in errors
   end
 
+  test "admission settings default to 0.75 of an unknown limit and are validated" do
+    assert {:ok, config} = Config.parse(valid_env())
+    assert config.admission_memory_fraction == 0.75
+    assert config.memory_limit_bytes == nil
+
+    env =
+      Map.merge(valid_env(), %{
+        "ADMISSION_MEMORY_FRACTION" => "0.6",
+        "MEMORY_LIMIT_BYTES" => "1073741824"
+      })
+
+    assert {:ok, %{admission_memory_fraction: 0.6, memory_limit_bytes: 1_073_741_824}} =
+             Config.parse(env)
+
+    for bad <- ["0", "1.5", "lots"] do
+      env = Map.put(valid_env(), "ADMISSION_MEMORY_FRACTION", bad)
+      assert {:error, errors} = Config.parse(env)
+      assert "ADMISSION_MEMORY_FRACTION must be a number above 0 and at most 1" in errors
+    end
+
+    env = Map.put(valid_env(), "MEMORY_LIMIT_BYTES", "-1")
+    assert {:error, errors} = Config.parse(env)
+    assert "MEMORY_LIMIT_BYTES must be a positive integer" in errors
+  end
+
   test "reports every problem at once" do
     assert {:error, errors} =
              Config.parse(%{

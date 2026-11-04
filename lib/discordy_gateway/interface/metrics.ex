@@ -39,7 +39,11 @@ defmodule DiscordyGateway.Interface.Metrics do
       ),
       last_value("discordy_gateway.gauges.sessions_local"),
       last_value("discordy_gateway.gauges.guild_processes"),
-      last_value("discordy_gateway.gauges.voice_allocations")
+      last_value("discordy_gateway.gauges.voice_allocations"),
+      counter("discordy_gateway.admission.refused.count"),
+      last_value("discordy_gateway.admission.sample.memory_bytes", unit: :byte),
+      last_value("discordy_gateway.admission.sample.memory_limit_bytes", unit: :byte),
+      last_value("discordy_gateway.admission.sample.closed")
     ]
   end
 

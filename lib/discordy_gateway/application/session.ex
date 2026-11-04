@@ -55,7 +55,11 @@ defmodule DiscordyGateway.Application.Session do
   def start(transport),
     do: DynamicSupervisor.start_child(DiscordyGateway.SessionSupervisor, {__MODULE__, transport})
 
-  def start_link(transport), do: GenServer.start_link(__MODULE__, transport)
+  # Full sweeps are frequent so that the large frames a session builds once (READY, GUILD_CREATE)
+  # do not stay referenced from its old heap, which would pin their binaries for as long as the
+  # session lives.
+  def start_link(transport),
+    do: GenServer.start_link(__MODULE__, transport, spawn_opt: [fullsweep_after: 10])
 
   @doc "Hands a decoded client frame to the session."
   @spec frame(pid(), term()) :: :ok
@@ -119,7 +123,13 @@ defmodule DiscordyGateway.Application.Session do
 
   def handle_call({:deliver_p2p, _user_id, _payload}, _from, state), do: {:reply, :error, state}
 
+  # GUILD_CREATE is the one large frame of a connection (every channel and member of the guild).
+  # Hibernating right after it compacts the heap it grew while the frame was built, so an idle
+  # session holds only its small steady-state.
   @impl true
+  def handle_info({:dispatch, "GUILD_CREATE", encoded}, %{status: :identified} = state),
+    do: {:noreply, dispatch(state, "GUILD_CREATE", encoded), :hibernate}
+
   def handle_info({:dispatch, event, encoded}, %{status: :identified} = state),
     do: {:noreply, dispatch(state, event, encoded)}
 

@@ -1,14 +1,19 @@
 defmodule DiscordyGateway.Application.Dispatch do
   @moduledoc """
-  Delivery of dispatch payloads to session processes. A payload is JSON-encoded once and the
-  resulting iodata is shared by every recipient; each session adds its own sequence number.
+  Delivery of dispatch payloads to session processes. A payload is JSON-encoded once into a single
+  binary and that binary is shared by every recipient; each session adds its own sequence number.
+
+  The payload is a binary, not iodata: a message that carries a nested iodata list is copied onto
+  the heap of every receiving process (a 200-member GUILD_CREATE is a list of thousands of small
+  binaries, about 300 KiB per session), while a binary above 64 bytes is reference counted and
+  sending it copies only a pointer.
   """
 
-  @spec encode(term()) :: iodata()
-  def encode(payload), do: Jason.encode_to_iodata!(payload)
+  @spec encode(term()) :: binary()
+  def encode(payload), do: Jason.encode!(payload)
 
   @doc "Sends an already encoded payload to one session."
-  @spec send_encoded(pid(), String.t(), iodata()) :: :ok
+  @spec send_encoded(pid(), String.t(), binary()) :: :ok
   def send_encoded(pid, event, encoded) do
     send(pid, {:dispatch, event, encoded})
     :ok

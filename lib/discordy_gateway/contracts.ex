@@ -42,7 +42,8 @@ defmodule DiscordyGateway.Contracts do
     rate_limited: 4008,
     session_timed_out: 4009,
     invalid_intents: 4013,
-    disallowed_intents: 4014
+    disallowed_intents: 4014,
+    server_overloaded: 4015
   }
 
   @intents %{

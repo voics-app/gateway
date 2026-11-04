@@ -32,6 +32,8 @@ defmodule DiscordyGateway.Application.Ports do
   def session_directory, do: fetch(:session_directory)
   @spec turn_credentials() :: module()
   def turn_credentials, do: fetch(:turn_credentials)
+  @spec memory_probe() :: module()
+  def memory_probe, do: fetch(:memory_probe)
   @spec server_directory() :: module()
   def server_directory, do: fetch(:server_directory)
 
