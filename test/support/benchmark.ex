@@ -8,6 +8,7 @@ defmodule DiscordyGateway.Benchmark do
   """
 
   alias DiscordyGateway.Application.Events.Ingest
+  alias DiscordyGateway.Application.Pipeline
   alias DiscordyGateway.Application.Session
   alias DiscordyGateway.Fakes
 
@@ -183,7 +184,7 @@ defmodule DiscordyGateway.Benchmark do
 
     :telemetry.attach(
       id,
-      DiscordyGateway.Application.Pipeline.event(),
+      Pipeline.event(),
       fn _event, %{seconds: seconds}, %{stage: stage}, table ->
         :ets.insert(table, {stage, seconds})
       end,

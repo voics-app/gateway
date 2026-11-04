@@ -2,6 +2,7 @@ defmodule DiscordyGateway.Application.SlowConsumerTest do
   use DiscordyGateway.Case, async: false
 
   alias DiscordyGateway.Application.Session
+  alias DiscordyGateway.Fakes.ResumeStore
 
   setup do
     previous = Application.fetch_env!(:discordy_gateway, :settings)
@@ -23,7 +24,7 @@ defmodule DiscordyGateway.Application.SlowConsumerTest do
     {session, transport}
   end
 
-  defp wait_for(fun, attempts \ 50) do
+  defp wait_for(fun, attempts \\ 50) do
     cond do
       fun.() -> :ok
       attempts == 0 -> flunk("condition not reached")
@@ -58,7 +59,7 @@ defmodule DiscordyGateway.Application.SlowConsumerTest do
 
     :ok = wait_for(fn -> :sys.get_state(session).transport == nil end)
     assert Process.alive?(session)
-    assert {:ok, entries} = DiscordyGateway.Fakes.ResumeStore.fetch(:sys.get_state(session).id)
+    assert {:ok, entries} = ResumeStore.fetch(:sys.get_state(session).id)
     assert length(entries) >= 100
   end
 

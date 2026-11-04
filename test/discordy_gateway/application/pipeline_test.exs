@@ -10,7 +10,9 @@ defmodule DiscordyGateway.Application.PipelineTest do
     :telemetry.attach(
       id,
       Pipeline.event(),
-      fn _event, measurements, meta, _config -> send(test, {:stage, meta.stage, measurements}) end,
+      fn _event, measurements, meta, _config ->
+        send(test, {:stage, meta.stage, measurements})
+      end,
       nil
     )
 
