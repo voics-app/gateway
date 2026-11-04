@@ -46,7 +46,8 @@ defmodule DiscordyGateway.CompositionRoot do
       default_voice_region: config.default_voice_region,
       public_gateway_url: config.public_gateway_url,
       e2ee_settings_unavailable_policy: config.e2ee_settings_unavailable_policy,
-      voice_detach_grace_ms: config.voice_detach_grace_ms
+      voice_detach_grace_ms: config.voice_detach_grace_ms,
+      transport_backlog_limit: config.transport_backlog_limit
     )
 
     put(:auth,

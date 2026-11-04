@@ -10,7 +10,7 @@ defmodule DiscordyGateway.Application.Guild do
 
   use GenServer, restart: :temporary
 
-  alias DiscordyGateway.Application.{Dispatch, Ports, Settings}
+  alias DiscordyGateway.Application.{Dispatch, Pipeline, Ports, Settings}
   alias DiscordyGateway.Application.Voice.{Effects, Room}
   alias DiscordyGateway.Domain.Events.EventEnvelope
   alias DiscordyGateway.Domain.{Fanout, GuildState, Intents, Permissions, Presence, Subscriber}
@@ -48,7 +48,8 @@ defmodule DiscordyGateway.Application.Guild do
 
   @doc "Delivers a `discordy.guild.v1` or `discordy.message.v1` envelope to a running guild."
   @spec event(String.t(), EventEnvelope.t()) :: :ok | :not_running
-  def event(guild_id, %EventEnvelope{} = envelope), do: cast(guild_id, {:event, envelope})
+  def event(guild_id, %EventEnvelope{} = envelope),
+    do: cast(guild_id, {:event, envelope, System.monotonic_time()})
 
   @spec presence(String.t(), map()) :: :ok | :not_running
   def presence(guild_id, payload), do: cast(guild_id, {:presence, payload})
@@ -100,7 +101,10 @@ defmodule DiscordyGateway.Application.Guild do
 
   def handle_cast({:leave, pid}, state), do: {:noreply, drop_subscriber(state, pid)}
 
-  def handle_cast({:event, envelope}, state), do: handle_event(envelope, state)
+  def handle_cast({:event, envelope, queued_at}, state) do
+    Pipeline.since(:guild_queue, queued_at)
+    handle_event(envelope, state)
+  end
 
   def handle_cast({:presence, payload}, state) do
     fanout(state, "PRESENCE_UPDATE", Map.put(payload, "guild_id", state.id), nil, state.cache)
@@ -313,22 +317,30 @@ defmodule DiscordyGateway.Application.Guild do
   defp after_event(_type, _data, state), do: {:noreply, state}
 
   defp fanout(state, event, data, channel_id, plan_cache) do
-    plan =
-      Fanout.plan(
-        plan_cache,
-        subscribers(state),
-        event,
-        data,
-        channel_id,
-        System.os_time(:millisecond)
+    {plan, quiet} =
+      Pipeline.measure(:fanout_plan, fn ->
+        plan =
+          Fanout.plan(
+            plan_cache,
+            subscribers(state),
+            event,
+            data,
+            channel_id,
+            System.os_time(:millisecond)
+          )
+
+        {plan, quiet_pids(state, plan, event, data)}
+      end)
+
+    Pipeline.measure(:fanout_send, fn ->
+      plan
+      |> Enum.group_by(
+        fn {pid, variant} -> {variant, MapSet.member?(quiet, pid)} end,
+        &elem(&1, 0)
       )
-
-    quiet = quiet_pids(state, plan, event, data)
-
-    plan
-    |> Enum.group_by(fn {pid, variant} -> {variant, MapSet.member?(quiet, pid)} end, &elem(&1, 0))
-    |> Enum.each(fn {{variant, quiet?}, pids} ->
-      Dispatch.to_sessions(pids, event, variant_payload(data, variant, quiet?))
+      |> Enum.each(fn {{variant, quiet?}, pids} ->
+        Dispatch.to_sessions(pids, event, variant_payload(data, variant, quiet?))
+      end)
     end)
   end
 

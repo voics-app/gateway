@@ -6,6 +6,8 @@ defmodule DiscordyGateway.Infrastructure.Valkey.Pool do
 
   use Supervisor
 
+  alias DiscordyGateway.Infrastructure.Valkey.ResumeWriter
+
   @size 4
   @counter :valkey_pool_counter
   @names List.to_tuple(for index <- 0..(@size - 1), do: :"valkey_#{index}")
@@ -24,7 +26,7 @@ defmodule DiscordyGateway.Infrastructure.Valkey.Pool do
         )
       end
 
-    Supervisor.init(children, strategy: :one_for_one)
+    Supervisor.init(children ++ ResumeWriter.child_specs(), strategy: :one_for_one)
   end
 
   @spec command([String.t() | integer()]) :: {:ok, term()} | {:error, term()}

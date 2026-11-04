@@ -35,6 +35,7 @@ defmodule DiscordyGateway.Infrastructure.Config do
        {:ok, env["DEFAULT_VOICE_REGION"] |> blank_to_nil() |> Kernel.||("nl-home")}},
       {:e2ee_settings_unavailable_policy, e2ee_settings_policy(env)},
       {:voice_detach_grace_ms, voice_detach_grace(env)},
+      {:transport_backlog_limit, positive_int(env, "TRANSPORT_BACKLOG_LIMIT", 2000)},
       {:cluster_dns_query, {:ok, blank_to_nil(env["CLUSTER_DNS_QUERY"])}},
       {:port, port(env)}
     ]
@@ -171,6 +172,13 @@ defmodule DiscordyGateway.Infrastructure.Config do
     case Integer.parse(blank_to_nil(env["VOICE_DETACH_GRACE_MS"]) || "15000") do
       {ms, ""} when ms >= 0 -> {:ok, ms}
       _ -> {:error, "VOICE_DETACH_GRACE_MS must be a non-negative integer"}
+    end
+  end
+
+  defp positive_int(env, name, default) do
+    case Integer.parse(blank_to_nil(env[name]) || Integer.to_string(default)) do
+      {value, ""} when value > 0 -> {:ok, value}
+      _ -> {:error, "#{name} must be a positive integer"}
     end
   end
 

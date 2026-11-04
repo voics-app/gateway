@@ -13,11 +13,19 @@ defmodule DiscordyGateway.Integration.ValkeyTest do
     VoiceAllocationStore
   }
 
+  # `VALKEY_TEST_URL` points the suite at an existing Valkey (for a runner that cannot reach the
+  # ports of containers it starts); without it a throwaway container is started.
   setup_all do
-    {_name, port} =
-      Containers.start("valkey/valkey:8-alpine", 6379, [], "Ready to accept connections")
+    url =
+      System.get_env("VALKEY_TEST_URL") ||
+        (
+          {_name, port} =
+            Containers.start("valkey/valkey:8-alpine", 6379, [], "Ready to accept connections")
 
-    start_supervised!({Pool, url: "redis://127.0.0.1:#{port}"})
+          "redis://127.0.0.1:#{port}"
+        )
+
+    start_supervised!({Pool, url: url})
     assert Pool.ready?()
     :ok
   end
@@ -33,6 +41,24 @@ defmodule DiscordyGateway.Integration.ValkeyTest do
       assert length(entries) == 1000
       assert {101, "f101"} = hd(entries)
 
+      assert :ok = ResumeStore.delete(id)
+      assert {:ok, []} = ResumeStore.fetch(id)
+    end
+
+    test "batched appends of many sessions stay ordered per session and are visible to fetch" do
+      ids = for n <- 1..20, do: "batch-#{System.unique_integer([:positive])}-#{n}"
+
+      for seq <- 1..50, id <- ids, do: :ok = ResumeStore.append(id, [{seq, "f#{seq}"}])
+
+      for id <- ids do
+        assert {:ok, entries} = ResumeStore.fetch(id)
+        assert Enum.map(entries, &elem(&1, 0)) == Enum.to_list(1..50)
+      end
+    end
+
+    test "delete removes entries that were still waiting for their batch" do
+      id = "del-#{System.unique_integer([:positive])}"
+      :ok = ResumeStore.append(id, [{1, "a"}])
       assert :ok = ResumeStore.delete(id)
       assert {:ok, []} = ResumeStore.fetch(id)
     end
