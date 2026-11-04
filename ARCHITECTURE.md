@@ -80,6 +80,16 @@ flowchart LR
   RESUME from a new connection starts a short-lived stub session that calls the original
   session (`{:resume, ...}`, cluster-wide through `:pg`), which re-attaches the new transport,
   replays the missed frames and then sends RESUMED. The stub forwards later frames to it.
+  The Valkey write is not on the session path: `ResumeWriter` (4 processes, a session always maps to the
+  same one) collects the entries that arrived while the previous batch was in flight and writes them as
+  one pipeline; `fetch` and `delete` wait for the session's pending entries first. A socket whose
+  mailbox holds more than `TRANSPORT_BACKLOG_LIMIT` frames (checked every 32nd frame) is killed by its
+  session, which stays resumable.
+- **Pipeline timing**: `discordy_gateway_pipeline_stage_seconds{stage}` times every stage from the
+  consumer to the socket (`ingest`, `dedup`, `guild_queue`, `fanout_plan`, `fanout_send`,
+  `session_dispatch`), and `discordy_gateway_gauges_server_mailbox_max` / `_session_mailbox_max` report
+  the longest guild-or-call and session mailboxes every 10 s. The stage whose time grows with load while
+  the others stay flat is the serial one.
 - **Guild** (Horde registry, one per guild in the cluster). Holds the `GuildState` cache,
   subscribers (monitored), voice `Room`, and idles out five minutes after the last subscriber
   leaves. Sessions monitor it and re-join if it crashes.

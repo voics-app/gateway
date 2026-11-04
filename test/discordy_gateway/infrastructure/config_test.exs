@@ -61,6 +61,16 @@ defmodule DiscordyGateway.Infrastructure.ConfigTest do
     assert "E2EE_SETTINGS_UNAVAILABLE_POLICY must be one of open, closed, wait" in errors
   end
 
+  test "TRANSPORT_BACKLOG_LIMIT defaults to 2000 and must be a positive integer" do
+    assert {:ok, %{transport_backlog_limit: 2000}} = Config.parse(valid_env())
+
+    assert {:ok, %{transport_backlog_limit: 500}} =
+             Config.parse(Map.put(valid_env(), "TRANSPORT_BACKLOG_LIMIT", "500"))
+
+    assert {:error, errors} = Config.parse(Map.put(valid_env(), "TRANSPORT_BACKLOG_LIMIT", "0"))
+    assert "TRANSPORT_BACKLOG_LIMIT must be a positive integer" in errors
+  end
+
   test "reports every problem at once" do
     assert {:error, errors} =
              Config.parse(%{

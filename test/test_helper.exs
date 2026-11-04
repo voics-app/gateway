@@ -1,2 +1,2 @@
 DiscordyGateway.Fakes.start()
-ExUnit.start(exclude: [:integration])
+ExUnit.start(exclude: [:integration, :benchmark])
