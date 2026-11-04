@@ -55,11 +55,13 @@ them with `docker volume rm` to start clean. Override `ELIXIR_IMAGE` or `REDPAND
 ## Benchmarks
 
 `mix test --include benchmark` runs the local capacity benchmarks in `test/benchmark/` (sessions of a
-large guild: memory per session; one-guild fan-out: deliveries per second). They need a Valkey
-reachable at `BENCH_VALKEY_URL` (for example `docker run -d -p 6379:6379 valkey/valkey:8-alpine`) so
-the per-dispatch resume-buffer write is part of the measurement, and print their figures. Sizes:
-`BENCH_SESSIONS` (300), `BENCH_GUILD_MEMBERS` (200). The figures are local to the machine, not
-cluster figures.
+large guild: memory per session; one-guild
+fan-out: deliveries per second and consumer-to-socket latency, optionally with stalled readers). They
+need a Valkey reachable at `BENCH_VALKEY_URL` (for example `docker run -d -p 6379:6379
+valkey/valkey:8-alpine`) so the resume-buffer writes are part of the measurement. Sizes:
+`BENCH_SESSIONS` (300), `BENCH_GUILD_MEMBERS` (200), `BENCH_RECEIVERS` (50), `BENCH_MESSAGES` (6000), `BENCH_RATE` (messages per second, 0 = as fast as
+possible), `BENCH_SLOW` (stalled readers, 0), `BENCH_STAGES=1` (per-stage timings; the handler slows
+the run). The figures are local to the machine, not cluster figures.
 
 ## Configuration
 
@@ -88,6 +90,7 @@ reported at once. Names follow P2.
 | `VOICE_DETACH_GRACE_MS` | no (`15000`) | how long a dropped connection keeps its voice state (guild voice or DM call) before the session leaves voice; shorter than the 120 s resume window so a closed or crashed client does not keep a ghost call open (the next call would join it and not ring) |
 | `ADMISSION_MEMORY_FRACTION` | no (`0.75`) | share of the memory limit at which new connections are refused with the retryable close code `4015` `SERVER_OVERLOADED`; they are accepted again 5 points below it. Connected sessions are never dropped by it |
 | `MEMORY_LIMIT_BYTES` | no | memory limit admission control measures against; defaults to the container cgroup limit (v2 `memory.max`, then v1), and without any limit admission control is off |
+| `TRANSPORT_BACKLOG_LIMIT` | no (`2000`) | frames a socket may have queued before its session cuts the connection as a slow consumer; the frames stay in the resume buffer and the client reconnects and resumes, so one stalled reader cannot grow gateway memory without bound |
 | `RELEASE_COOKIE` | prod | Erlang distribution cookie |
 | `CLUSTER_DNS_QUERY` | no | headless-service DNS name; enables libcluster DNS polling |
 | `PORT` | no (`4000`) | HTTP port |

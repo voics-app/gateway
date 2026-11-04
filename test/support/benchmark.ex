@@ -8,6 +8,7 @@ defmodule DiscordyGateway.Benchmark do
   """
 
   alias DiscordyGateway.Application.Events.Ingest
+  alias DiscordyGateway.Application.Pipeline
   alias DiscordyGateway.Application.Session
   alias DiscordyGateway.Fakes
 
@@ -67,6 +68,18 @@ defmodule DiscordyGateway.Benchmark do
     ExUnit.Callbacks.start_supervised!({DiscordyGateway.Infrastructure.Valkey.Pool, url: url})
     ExUnit.Callbacks.on_exit(fn -> Application.put_env(:discordy_gateway, :ports, ports) end)
     :ok
+  end
+
+  @doc """
+  Starts a session whose transport never reads (a client behind a stalled connection): every frame
+  the session sends piles up in the transport mailbox until the session cuts it off.
+  """
+  @spec connect_slow(String.t()) :: %{session: pid(), sink: pid()}
+  def connect_slow(user_id) do
+    sink = spawn(fn -> Process.sleep(:infinity) end)
+    {:ok, session} = Session.start(sink)
+    Session.frame(session, %{"op" => 2, "d" => %{"token" => "user-" <> user_id, "intents" => 0}})
+    %{session: session, sink: sink}
   end
 
   @doc "Registers the api responses for `count` users that are members of `guild`."
@@ -158,6 +171,39 @@ defmodule DiscordyGateway.Benchmark do
     Enum.all?(clients, fn %{session: pid} ->
       match?({:message_queue_len, 0}, Process.info(pid, :message_queue_len))
     end)
+  end
+
+  @doc """
+  Starts collecting the pipeline stage timings; `stage_report/1` returns the mean and maximum per
+  stage in milliseconds. The handler is detached when the test ends.
+  """
+  @spec collect_stages() :: :ets.table()
+  def collect_stages do
+    table = :ets.new(:bench_stages, [:public, :duplicate_bag])
+    id = "bench-stages-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      id,
+      Pipeline.event(),
+      fn _event, %{seconds: seconds}, %{stage: stage}, table ->
+        :ets.insert(table, {stage, seconds})
+      end,
+      table
+    )
+
+    ExUnit.Callbacks.on_exit(fn -> :telemetry.detach(id) end)
+    table
+  end
+
+  @doc "Mean / max milliseconds and sample count per stage, as printable lines."
+  @spec stage_report(:ets.table()) :: [String.t()]
+  def stage_report(table) do
+    for stage <- table |> :ets.tab2list() |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort() do
+      values = for {^stage, seconds} <- :ets.tab2list(table), do: seconds * 1000
+      mean = Enum.sum(values) / length(values)
+
+      "#{stage}: mean #{Float.round(mean, 3)} ms, max #{Float.round(Enum.max(values), 1)} ms, n=#{length(values)}"
+    end
   end
 
   @doc "Polls `fun` until it returns true; raises after `timeout_ms`."

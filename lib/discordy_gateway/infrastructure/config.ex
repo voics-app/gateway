@@ -37,6 +37,7 @@ defmodule DiscordyGateway.Infrastructure.Config do
       {:voice_detach_grace_ms, voice_detach_grace(env)},
       {:admission_memory_fraction, admission_fraction(env)},
       {:memory_limit_bytes, memory_limit(env)},
+      {:transport_backlog_limit, positive_int(env, "TRANSPORT_BACKLOG_LIMIT", 2000)},
       {:cluster_dns_query, {:ok, blank_to_nil(env["CLUSTER_DNS_QUERY"])}},
       {:port, port(env)}
     ]
@@ -193,6 +194,13 @@ defmodule DiscordyGateway.Infrastructure.Config do
           {bytes, ""} when bytes > 0 -> {:ok, bytes}
           _ -> {:error, "MEMORY_LIMIT_BYTES must be a positive integer"}
         end
+    end
+  end
+
+  defp positive_int(env, name, default) do
+    case Integer.parse(blank_to_nil(env[name]) || Integer.to_string(default)) do
+      {value, ""} when value > 0 -> {:ok, value}
+      _ -> {:error, "#{name} must be a positive integer"}
     end
   end
 

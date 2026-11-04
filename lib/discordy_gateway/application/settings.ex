@@ -52,6 +52,13 @@ defmodule DiscordyGateway.Application.Settings do
   @spec admission_interval_ms() :: pos_integer()
   def admission_interval_ms, do: get(:admission_interval_ms, 1_000)
 
+  @doc """
+  Frames a socket process may have queued before the session cuts the connection as a slow
+  consumer (the client resumes).
+  """
+  @spec transport_backlog_limit() :: pos_integer()
+  def transport_backlog_limit, do: get(:transport_backlog_limit, 2_000)
+
   defp fetch(key),
     do: :discordy_gateway |> Application.fetch_env!(:settings) |> Keyword.fetch!(key)
 

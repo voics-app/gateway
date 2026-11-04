@@ -49,7 +49,8 @@ defmodule DiscordyGateway.CompositionRoot do
       e2ee_settings_unavailable_policy: config.e2ee_settings_unavailable_policy,
       voice_detach_grace_ms: config.voice_detach_grace_ms,
       admission_memory_fraction: config.admission_memory_fraction,
-      memory_limit_bytes: config.memory_limit_bytes
+      memory_limit_bytes: config.memory_limit_bytes,
+      transport_backlog_limit: config.transport_backlog_limit
     )
 
     put(:auth,
