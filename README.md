@@ -1,6 +1,6 @@
-# Discordy gateway
+# Voics gateway
 
-The realtime edge of Discordy, written in Elixir/Phoenix. It terminates client WebSockets
+The realtime edge of Voics, written in Elixir/Phoenix. It terminates client WebSockets
 (`wss://<gateway>/gateway?v=1&encoding=json`, protocol P7), consumes the event bus (P6) and
 fans events out to the right sessions, allocates voice nodes (P8), and relays end-to-end
 encrypted messages, P2P signalling, telemetry and Watch Together.
