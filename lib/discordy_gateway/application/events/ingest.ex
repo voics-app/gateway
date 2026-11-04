@@ -6,6 +6,7 @@ defmodule DiscordyGateway.Application.Events.Ingest do
   """
 
   alias DiscordyGateway.Application.Events.{Deduplicator, Router}
+  alias DiscordyGateway.Application.Pipeline
   alias DiscordyGateway.Domain.Events.EventEnvelope
 
   require Logger
@@ -14,7 +15,7 @@ defmodule DiscordyGateway.Application.Events.Ingest do
 
   @spec handle(atom(), binary()) :: :ok
   def handle(topic, value) do
-    outcome = process(topic, value)
+    outcome = Pipeline.measure(:ingest, fn -> process(topic, value) end)
 
     :telemetry.execute([:discordy_gateway, :events, :consumed], %{count: 1}, %{
       topic: topic,
@@ -27,7 +28,7 @@ defmodule DiscordyGateway.Application.Events.Ingest do
   defp process(topic, value) do
     with {:ok, raw} <- Jason.decode(value),
          {:ok, envelope} <- EventEnvelope.parse(raw) do
-      case Deduplicator.check(envelope.id) do
+      case Pipeline.measure(:dedup, fn -> Deduplicator.check(envelope.id) end) do
         :new ->
           Router.deliver(topic, envelope)
           :routed

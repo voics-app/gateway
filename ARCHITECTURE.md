@@ -80,6 +80,26 @@ flowchart LR
   RESUME from a new connection starts a short-lived stub session that calls the original
   session (`{:resume, ...}`, cluster-wide through `:pg`), which re-attaches the new transport,
   replays the missed frames and then sends RESUMED. The stub forwards later frames to it.
+  Payloads are encoded once into one binary that all recipients share (a message carrying iodata
+  is copied onto every receiver heap; a 200-member GUILD_CREATE cost about 300 KiB per session that
+  way), sessions hibernate after GUILD_CREATE and run with `fullsweep_after` 10, and so does the
+  socket process, so large frames do not stay pinned in an idle heap.
+- **Admission** samples the VM memory once a second and closes the gate at `ADMISSION_MEMORY_FRACTION`
+  of the limit (5 points hysteresis). While it is closed the socket answers every new connection with
+  close code 4015 `SERVER_OVERLOADED` (retryable) before a session starts, so overload refuses new
+  users instead of the container being OOM-killed with everyone connected. Metrics:
+  `discordy_gateway_admission_sample_memory_bytes`, `_memory_limit_bytes`, `_closed` and
+  `discordy_gateway_admission_refused_count`.
+  The Valkey write is not on the session path: `ResumeWriter` (4 processes, a session always maps to the
+  same one) collects the entries that arrived while the previous batch was in flight and writes them as
+  one pipeline; `fetch` and `delete` wait for the session's pending entries first. A socket whose
+  mailbox holds more than `TRANSPORT_BACKLOG_LIMIT` frames (checked every 32nd frame) is killed by its
+  session, which stays resumable.
+- **Pipeline timing**: `discordy_gateway_pipeline_stage_seconds{stage}` times every stage from the
+  consumer to the socket (`ingest`, `dedup`, `guild_queue`, `fanout_plan`, `fanout_send`,
+  `session_dispatch`), and `discordy_gateway_gauges_server_mailbox_max` / `_session_mailbox_max` report
+  the longest guild-or-call and session mailboxes every 10 s. The stage whose time grows with load while
+  the others stay flat is the serial one.
 - **Guild** (Horde registry, one per guild in the cluster). Holds the `GuildState` cache,
   subscribers (monitored), voice `Room`, and idles out five minutes after the last subscriber
   leaves. Sessions monitor it and re-join if it crashes.

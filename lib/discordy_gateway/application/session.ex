@@ -13,7 +13,7 @@ defmodule DiscordyGateway.Application.Session do
 
   use GenServer, restart: :temporary
 
-  alias DiscordyGateway.Application.{Dispatch, DmCall, Guild, Ids, Ports, Settings}
+  alias DiscordyGateway.Application.{Dispatch, DmCall, Guild, Ids, Pipeline, Ports, Settings}
   alias DiscordyGateway.Application.Presence.Publisher
   alias DiscordyGateway.Application.Relay.{E2eeRelay, P2pRelay, TelemetryRelay}
   alias DiscordyGateway.Application.Session.{Authenticate, Identity, Ready, VoiceRouting}
@@ -29,6 +29,9 @@ defmodule DiscordyGateway.Application.Session do
   @presence_refresh_ms 30_000
   @rejoin_delay_ms 1_000
   @resume_call_timeout_ms 10_000
+  # Inspecting another process makes the caller wait for it, so the socket backlog is read on every
+  # 32nd frame, not on each.
+  @backlog_check_every 32
 
   defstruct [
     :id,
@@ -55,7 +58,11 @@ defmodule DiscordyGateway.Application.Session do
   def start(transport),
     do: DynamicSupervisor.start_child(DiscordyGateway.SessionSupervisor, {__MODULE__, transport})
 
-  def start_link(transport), do: GenServer.start_link(__MODULE__, transport)
+  # Full sweeps are frequent so that the large frames a session builds once (READY, GUILD_CREATE)
+  # do not stay referenced from its old heap, which would pin their binaries for as long as the
+  # session lives.
+  def start_link(transport),
+    do: GenServer.start_link(__MODULE__, transport, spawn_opt: [fullsweep_after: 10])
 
   @doc "Hands a decoded client frame to the session."
   @spec frame(pid(), term()) :: :ok
@@ -119,7 +126,13 @@ defmodule DiscordyGateway.Application.Session do
 
   def handle_call({:deliver_p2p, _user_id, _payload}, _from, state), do: {:reply, :error, state}
 
+  # GUILD_CREATE is the one large frame of a connection (every channel and member of the guild).
+  # Hibernating right after it compacts the heap it grew while the frame was built, so an idle
+  # session holds only its small steady-state.
   @impl true
+  def handle_info({:dispatch, "GUILD_CREATE", encoded}, %{status: :identified} = state),
+    do: {:noreply, dispatch(state, "GUILD_CREATE", encoded), :hibernate}
+
   def handle_info({:dispatch, event, encoded}, %{status: :identified} = state),
     do: {:noreply, dispatch(state, event, encoded)}
 
@@ -468,6 +481,10 @@ defmodule DiscordyGateway.Application.Session do
   ## Dispatch and events
 
   defp dispatch(state, event, encoded) do
+    Pipeline.measure(:session_dispatch, fn -> do_dispatch(state, event, encoded) end)
+  end
+
+  defp do_dispatch(state, event, encoded) do
     seq = state.seq + 1
     frame = seq |> Codec.dispatch_iodata(event, encoded) |> IO.iodata_to_binary()
 
@@ -476,10 +493,37 @@ defmodule DiscordyGateway.Application.Session do
       {:error, reason} -> Logger.warning("resume buffer append failed: #{inspect(reason)}")
     end
 
-    if state.transport, do: send(state.transport, {:gw_frame, frame})
+    deliver_frame(state.transport, seq, frame)
     :telemetry.execute([:discordy_gateway, :dispatch, :sent], %{count: 1}, %{event: event})
     %{state | seq: seq}
   end
+
+  # A socket that reads slower than frames arrive buffers them in its mailbox, without bound.
+  # Past the backlog limit the socket process is killed instead: the frame is already in the resume
+  # buffer, the session sees the transport go down and stays resumable, and the client reconnects
+  # and resumes. One slow reader can then not grow gateway memory for everyone.
+  defp deliver_frame(nil, _seq, _frame), do: :ok
+
+  defp deliver_frame(transport, seq, frame) do
+    if rem(seq, @backlog_check_every) == 0 and
+         backlog(transport) > Settings.transport_backlog_limit() do
+      :telemetry.execute([:discordy_gateway, :session, :slow_consumer], %{count: 1})
+      Process.exit(transport, :kill)
+    else
+      send(transport, {:gw_frame, frame})
+    end
+
+    :ok
+  end
+
+  defp backlog(transport) when node(transport) == node() do
+    case Process.info(transport, :message_queue_len) do
+      {:message_queue_len, length} -> length
+      nil -> 0
+    end
+  end
+
+  defp backlog(_remote_transport), do: 0
 
   # GUILD_CREATE is dispatched by the guild process when this session joins it (filtered to the
   # channels the member can view, with voice states), so the raw event is only followed.

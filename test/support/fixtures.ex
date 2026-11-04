@@ -47,4 +47,30 @@ defmodule DiscordyGateway.Fixtures do
       ]
     }
   end
+
+  @doc "A guild with `member_count` members (ids `u1`, `u2`, ...) shaped like the api sends them."
+  def large_guild_payload(guild_id, member_count) do
+    members =
+      for n <- 1..member_count do
+        %{
+          "user" => %{
+            "id" => "u#{n}",
+            "username" => "member-#{n}",
+            "global_name" => "Member Number #{n}",
+            "avatar" => "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+            "discriminator" => "0"
+          },
+          "nick" => "nick-#{n}",
+          "roles" => ["300"],
+          "joined_at" => "2026-10-18T00:00:00Z"
+        }
+      end
+
+    channels =
+      for n <- 1..8 do
+        %{"id" => "c#{n}", "type" => 0, "name" => "channel-#{n}", "permission_overwrites" => []}
+      end
+
+    guild_payload(guild_id) |> Map.put("members", members) |> Map.put("channels", channels)
+  end
 end

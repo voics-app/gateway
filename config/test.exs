@@ -22,7 +22,8 @@ config :discordy_gateway, :ports,
   voice_token_signer: DiscordyGateway.Fakes.VoiceTokenSigner,
   turn_credentials: DiscordyGateway.Fakes.TurnCredentials,
   session_directory: DiscordyGateway.Infrastructure.Cluster.PgSessionDirectory,
-  server_directory: DiscordyGateway.Infrastructure.Cluster.HordeServerDirectory
+  server_directory: DiscordyGateway.Infrastructure.Cluster.HordeServerDirectory,
+  memory_probe: DiscordyGateway.Fakes.MemoryProbe
 
 config :discordy_gateway, :settings,
   default_voice_region: "nl-home",

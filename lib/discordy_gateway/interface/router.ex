@@ -11,6 +11,9 @@ defmodule DiscordyGateway.Interface.Router do
 
   @max_frame_size 4_000_000
   @idle_timeout_ms 90_000
+  # The socket process writes every frame once and keeps none; frequent full sweeps release the
+  # large binaries (READY, GUILD_CREATE) it wrote instead of pinning them in its old heap.
+  @fullsweep_after 10
 
   plug :match
   plug HttpMetrics
@@ -26,6 +29,7 @@ defmodule DiscordyGateway.Interface.Router do
       |> WebSockAdapter.upgrade(Socket, [],
         timeout: @idle_timeout_ms,
         max_frame_size: @max_frame_size,
+        fullsweep_after: @fullsweep_after,
         compress: false
       )
       |> halt()
