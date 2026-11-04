@@ -32,7 +32,7 @@ defmodule DiscordyGateway.Infrastructure.Valkey.ResumeWriter do
         do: Supervisor.child_spec({__MODULE__, index}, id: {__MODULE__, index})
   end
 
-  def start_link(index), do: GenServer.start_link(__MODULE__, :ok, name: elem(@names, index))
+  def start_link(index), do: GenServer.start_link(__MODULE__, index, name: elem(@names, index))
 
   @doc "Queues entries (`{seq, frame}`) of a session for the next batch."
   @spec append(String.t(), [{non_neg_integer(), binary()}]) :: :ok
@@ -46,7 +46,7 @@ defmodule DiscordyGateway.Infrastructure.Valkey.ResumeWriter do
   defp writer(session_id), do: elem(@names, :erlang.phash2(session_id, @size))
 
   @impl true
-  def init(:ok), do: {:ok, %{pending: %{}, count: 0}}
+  def init(index), do: {:ok, %{index: index, pending: %{}, count: 0}}
 
   # Every clause returns a zero timeout, which fires only once the mailbox is empty: every entry
   # already waiting joins the batch before it is written (a full batch is written at once).
@@ -77,7 +77,7 @@ defmodule DiscordyGateway.Infrastructure.Valkey.ResumeWriter do
 
   defp write(%{pending: pending} = state) when map_size(pending) == 0, do: state
 
-  defp write(%{pending: pending}) do
+  defp write(%{index: index, pending: pending} = state) do
     commands =
       Enum.flat_map(pending, fn {session_id, entries} ->
         key = Contracts.resume_key(session_id)
@@ -90,11 +90,11 @@ defmodule DiscordyGateway.Infrastructure.Valkey.ResumeWriter do
         ]
       end)
 
-    case Pool.pipeline(commands) do
+    case Pool.bulk_pipeline(commands, index) do
       {:ok, _results} -> :ok
       {:error, reason} -> Logger.warning("resume buffer write failed: #{inspect(reason)}")
     end
 
-    %{pending: %{}, count: 0}
+    %{state | pending: %{}, count: 0}
   end
 end
