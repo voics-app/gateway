@@ -218,8 +218,9 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
   defp presence(d) do
     with {:ok, status} <- one_of(d, "status", @statuses),
          {:ok, afk} <- boolean(d, "afk", false),
+         {:ok, background} <- boolean(d, "background", false),
          {:ok, activities} <- activities(d) do
-      {:ok, %{status: status, activities: activities, afk: afk}}
+      {:ok, %{status: status, activities: activities, afk: afk, background: background}}
     end
   end
 

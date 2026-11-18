@@ -42,6 +42,19 @@ defmodule DiscordyGateway.Infrastructure.ConfigTest do
     assert byte_size(config.jwt_public_key) == 32
     assert config.snowflake_worker_id == 128
     assert config.cluster_dns_query == nil
+    assert config.mobile_background_presence_ms == 86_400_000
+  end
+
+  test "mobile background availability has a configurable positive bound" do
+    assert {:ok, %{mobile_background_presence_ms: 60_000}} =
+             Config.parse(Map.put(valid_env(), "MOBILE_BACKGROUND_PRESENCE_MS", "60000"))
+
+    for value <- ["0", "-1", "forever"] do
+      assert {:error, errors} =
+               Config.parse(Map.put(valid_env(), "MOBILE_BACKGROUND_PRESENCE_MS", value))
+
+      assert "MOBILE_BACKGROUND_PRESENCE_MS must be a positive integer" in errors
+    end
   end
 
   test "E2EE_SETTINGS_UNAVAILABLE_POLICY defaults to open and accepts open, closed and wait" do

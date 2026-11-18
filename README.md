@@ -24,6 +24,21 @@ HTTP endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics`, and (with `X-Inte
 `GET /internal/v1/admin/stats`, `POST /internal/v1/voice/nodes/{id}/drain`,
 `POST /internal/v1/voice/nodes/{id}/undrain`.
 
+### Mobile background presence
+
+P7 presence accepts `background: true` from mobile user sessions. The client sends automatic
+Idle or its explicitly chosen Online/Idle/DND/Invisible before OS suspension. A detached session
+keeps that availability indication for `MOBILE_BACKGROUND_PRESENCE_MS` (24 hours by default),
+then expires and broadcasts the remaining devices' aggregate. This is a bounded lease, not
+detection of an iOS force-quit. There is no background audio or fake client heartbeat to keep it alive.
+
+Foreground presence, successful RESUME, logout/session revocation, and a replacement IDENTIFY for
+the same mobile login cancel the old lease. Desktop and bot sessions keep the ordinary resume
+window. The retained process remains reachable for revocation; the resume buffer still has its
+ordinary retention and a missing buffer requires a fresh IDENTIFY. After a gateway crash, its
+presence entries expire within the ordinary 120-second store TTL. Each device refreshes only
+its own entry, and READY reads live entries instead of a stale cached aggregate.
+
 ## Run locally
 
 Start the infrastructure from `gitops/local` (`docker compose --profile deps up -d`), then:
@@ -88,6 +103,7 @@ reported at once. Names follow P2.
 | `DEFAULT_VOICE_REGION` | no (`nl-home`) | region used when guild and channel set none |
 | `E2EE_SETTINGS_UNAVAILABLE_POLICY` | no (`open`) | what a voice join does when Valkey cannot tell whether the participants have `e2ee_calls_default` on: `open` joins unencrypted and logs a warning, `closed` encrypts the call, `wait` retries the read (3 attempts, about 2 s apart) and then refuses the join with `VOICE_JOIN_FAILED` `{"error": "e2ee_settings_unavailable"}` |
 | `VOICE_DETACH_GRACE_MS` | no (`15000`) | how long a dropped connection keeps its voice state (guild voice or DM call) before the session leaves voice; shorter than the 120 s resume window so a closed or crashed client does not keep a ghost call open (the next call would join it and not ring) |
+| `MOBILE_BACKGROUND_PRESENCE_MS` | no (`86400000`) | positive, bounded availability lease after a mobile user session reports background suspension; revoked, foreground, resumed and replaced sessions clear it |
 | `ADMISSION_MEMORY_FRACTION` | no (`0.75`) | share of the memory limit at which new connections are refused with the retryable close code `4015` `SERVER_OVERLOADED`; they are accepted again 5 points below it. Connected sessions are never dropped by it |
 | `MEMORY_LIMIT_BYTES` | no | memory limit admission control measures against; defaults to the container cgroup limit (v2 `memory.max`, then v1), and without any limit admission control is off |
 | `TRANSPORT_BACKLOG_LIMIT` | no (`2000`) | frames a socket may have queued before its session cuts the connection as a slow consumer; the frames stay in the resume buffer and the client reconnects and resumes, so one stalled reader cannot grow gateway memory without bound |

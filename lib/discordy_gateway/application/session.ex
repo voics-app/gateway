@@ -14,7 +14,7 @@ defmodule DiscordyGateway.Application.Session do
   use GenServer, restart: :temporary
 
   alias DiscordyGateway.Application.{Dispatch, DmCall, Guild, Ids, Pipeline, Ports, Settings}
-  alias DiscordyGateway.Application.Presence.Publisher
+  alias DiscordyGateway.Application.Presence.{MobileBackground, Publisher}
   alias DiscordyGateway.Application.Relay.{E2eeRelay, P2pRelay, TelemetryRelay}
   alias DiscordyGateway.Application.Session.{Authenticate, Identity, Ready, VoiceRouting}
   alias DiscordyGateway.Contracts
@@ -42,6 +42,11 @@ defmodule DiscordyGateway.Application.Session do
     :limiter,
     :detach_token,
     :redirect,
+    background_token: nil,
+    background_timer: nil,
+    background_online: false,
+    manual_status: "online",
+    presence: nil,
     status: :connected,
     seq: 0,
     guild_ids: MapSet.new(),
@@ -126,6 +131,17 @@ defmodule DiscordyGateway.Application.Session do
 
   def handle_call({:deliver_p2p, _user_id, _payload}, _from, state), do: {:reply, :error, state}
 
+  def handle_call({:replace_background_session, identity}, _from, state) do
+    if MobileBackground.same_login?(state, identity) do
+      if state.transport,
+        do: send(state.transport, {:gw_close, Contracts.close_code(:unknown_error)})
+
+      {:stop, :normal, :ok, state}
+    else
+      {:reply, :ok, state}
+    end
+  end
+
   # GUILD_CREATE is the one large frame of a connection (every channel and member of the guild).
   # Hibernating right after it compacts the heap it grew while the frame was built, so an idle
   # session holds only its small steady-state.
@@ -200,8 +216,16 @@ defmodule DiscordyGateway.Application.Session do
     end
   end
 
-  def handle_info({:resume_expired, token}, %{detach_token: token} = state) when token != nil,
-    do: {:stop, :normal, state}
+  def handle_info({:resume_expired, token}, %{detach_token: token} = state) when token != nil do
+    if MobileBackground.retained?(state), do: {:noreply, state}, else: {:stop, :normal, state}
+  end
+
+  def handle_info({:background_presence_expired, token}, %{background_token: token} = state)
+      when token != nil do
+    if state.transport == nil,
+      do: {:stop, :normal, state},
+      else: {:noreply, MobileBackground.clear(state)}
+  end
 
   def handle_info({:voice_detach_expired, token}, %{detach_token: token} = state)
       when token != nil and state.voice_scope != nil do
@@ -216,7 +240,7 @@ defmodule DiscordyGateway.Application.Session do
   end
 
   def handle_info(:refresh_presence, %{status: :identified} = state) do
-    Ports.presence_store().refresh(state.identity.user_id)
+    Publisher.refresh(presence_context(state))
     Process.send_after(self(), :refresh_presence, @presence_refresh_ms)
     {:noreply, state}
   end
@@ -261,8 +285,10 @@ defmodule DiscordyGateway.Application.Session do
   defp command(cmd, payload, state), do: {:noreply, identified_command(cmd, payload, state)}
 
   defp identified_command(:presence_update, presence, state) do
-    Publisher.update(presence_context(state), session_presence(presence, state.identity))
-    state
+    current = session_presence(presence, state.identity)
+    Publisher.update(presence_context(state), current)
+    manual = if presence.afk and presence.status == "idle", do: "online", else: presence.status
+    MobileBackground.update(%{state | presence: current, manual_status: manual}, presence)
   end
 
   defp identified_command(:voice_state_update, request, state) do
@@ -379,6 +405,7 @@ defmodule DiscordyGateway.Application.Session do
   end
 
   defp become_ready(state, identity, payload, ready) do
+    MobileBackground.replace_previous(identity)
     :ok = Ports.session_directory().register(state.id, identity.user_id, identity.device_id)
     Process.send_after(self(), :refresh_presence, @presence_refresh_ms)
 
@@ -395,8 +422,14 @@ defmodule DiscordyGateway.Application.Session do
     state = join_guilds(state, List.wrap(ready["guilds"]))
     replay_inbox(state)
     :ok = DmCall.announce_calls(identity.user_id, self())
-    Publisher.update(presence_context(state), session_presence(payload.presence, identity))
-    state
+    presence = session_presence(payload.presence, identity)
+    Publisher.update(presence_context(state), presence)
+    manual = get_in(ready, ["user_settings", "status"]) || "online"
+
+    MobileBackground.update(
+      %{state | presence: presence, manual_status: manual},
+      payload.presence
+    )
   end
 
   defp session_presence(nil, identity),
@@ -452,7 +485,7 @@ defmodule DiscordyGateway.Application.Session do
     with {:ok, entries} <- Ports.resume_store().fetch(state.id),
          buffer = Enum.map(entries, fn {entry_seq, frame} -> %{seq: entry_seq, frame: frame} end),
          {:ok, replay} <- ResumeReplay.select(buffer, seq, state.seq) do
-      state = attach(state, transport)
+      state = state |> MobileBackground.clear() |> attach(transport)
       Enum.each(replay, &send(transport, {:gw_frame, &1.frame}))
       state = dispatch(state, "RESUMED", Dispatch.encode(%{}))
       replay_inbox(state)
@@ -533,7 +566,11 @@ defmodule DiscordyGateway.Application.Session do
   defp user_event(state, %EventEnvelope{type: type, data: data}) do
     if Intents.allows?(state.identity.intents, type, :direct) do
       state = dispatch(state, type, Dispatch.encode(data))
-      state |> follow_membership(type, data) |> follow_relationship(type, data)
+
+      state
+      |> follow_membership(type, data)
+      |> follow_relationship(type, data)
+      |> follow_settings(type, data)
     else
       state
     end
@@ -544,6 +581,19 @@ defmodule DiscordyGateway.Application.Session do
        do: id in ids
 
   defp revoked?(_identity, _data), do: false
+
+  defp follow_settings(state, "USER_SETTINGS_UPDATE", %{"status" => status} = data)
+       when status in ~w(online idle dnd invisible) and status != state.manual_status do
+    if MobileBackground.retained?(state) do
+      state = MobileBackground.account_status(state, data)
+      Publisher.update(presence_context(state), state.presence)
+      state
+    else
+      %{state | manual_status: status}
+    end
+  end
+
+  defp follow_settings(state, _type, _data), do: state
 
   defp follow_membership(state, "GUILD_CREATE", %{"id" => _} = guild) do
     %{state | guild_ids: MapSet.put(state.guild_ids, guild["id"])} |> join_guilds([guild])
