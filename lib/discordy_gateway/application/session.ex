@@ -49,6 +49,7 @@ defmodule DiscordyGateway.Application.Session do
     presence: nil,
     status: :connected,
     seq: 0,
+    read_state_versioned: false,
     guild_ids: MapSet.new(),
     guild_refs: %{},
     friend_ids: [],
@@ -394,7 +395,7 @@ defmodule DiscordyGateway.Application.Session do
   defp identify(payload, state) do
     with {:ok, identity} <- Authenticate.identify(payload),
          {:ok, ready} <- Ports.api_client().fetch_ready(identity.user_id) do
-      {:noreply, become_ready(state, identity, payload, ready)}
+      hydrate_read_states(state, identity, payload, ready)
     else
       {:error, :authentication_failed} -> close(state, :authentication_failed)
       {:error, :invalid_intents} -> close(state, :invalid_intents)
@@ -404,9 +405,30 @@ defmodule DiscordyGateway.Application.Session do
     end
   end
 
+  defp hydrate_read_states(state, identity, payload, ready) do
+    # Subscription precedes the snapshot. This GenServer cannot process queued
+    # events until READY is sent, and channel versions resolve snapshot races.
+    :ok = Ports.session_directory().register(state.id, identity.user_id, identity.device_id)
+
+    case Ports.messages_client().fetch_read_states(identity.user_id) do
+      {:ok, reads} ->
+        ready =
+          Map.merge(ready, %{
+            "read_state" => reads.entries,
+            "read_state_versioned" => reads.versioned
+          })
+
+        state = %{state | read_state_versioned: reads.versioned}
+        {:noreply, become_ready(state, identity, payload, ready)}
+
+      {:error, _reason} ->
+        Logger.warning("read-state hydration failed during identification")
+        close(state, :unknown_error)
+    end
+  end
+
   defp become_ready(state, identity, payload, ready) do
     MobileBackground.replace_previous(identity)
-    :ok = Ports.session_directory().register(state.id, identity.user_id, identity.device_id)
     Process.send_after(self(), :refresh_presence, @presence_refresh_ms)
 
     state = %{
@@ -484,9 +506,11 @@ defmodule DiscordyGateway.Application.Session do
   defp resume_attach(transport, seq, state) do
     with {:ok, entries} <- Ports.resume_store().fetch(state.id),
          buffer = Enum.map(entries, fn {entry_seq, frame} -> %{seq: entry_seq, frame: frame} end),
-         {:ok, replay} <- ResumeReplay.select(buffer, seq, state.seq) do
+         {:ok, replay} <- ResumeReplay.select(buffer, seq, state.seq),
+         {:ok, reads} <- resume_read_states(state) do
       state = state |> MobileBackground.clear() |> attach(transport)
       Enum.each(replay, &send(transport, {:gw_frame, &1.frame}))
+      state = sync_read_states(state, reads)
       state = dispatch(state, "RESUMED", Dispatch.encode(%{}))
       replay_inbox(state)
       {:reply, :ok, state}
@@ -495,6 +519,29 @@ defmodule DiscordyGateway.Application.Session do
       {:error, _gap_or_store} -> {:stop, :normal, {:error, :gap}, state}
     end
   end
+
+  defp resume_read_states(state) do
+    case Ports.messages_client().fetch_read_states(state.identity.user_id) do
+      {:ok, %{versioned: false}} when state.read_state_versioned ->
+        {:error, :read_state_authority_lost}
+
+      result ->
+        result
+    end
+  end
+
+  defp sync_read_states(%{read_state_versioned: true} = state, %{
+         versioned: true,
+         entries: entries
+       }) do
+    dispatch(
+      state,
+      "READ_STATE_SYNC",
+      Dispatch.encode(%{"read_state" => entries, "read_state_versioned" => true})
+    )
+  end
+
+  defp sync_read_states(state, _reads), do: state
 
   defp attach(state, transport) do
     if state.transport_ref, do: Process.demonitor(state.transport_ref, [:flush])

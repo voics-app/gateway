@@ -7,6 +7,16 @@ encrypted messages, P2P signalling, telemetry and Watch Together.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the structure and the C4 diagram.
 
+Read-state hydration follows contracts#48 / docs ADR0027. IDENTIFY registers the user session
+before fetching the messages `/internal/v1/users/{id}/read-states` array, so updates received
+during the fetch follow READY. `X-Read-State-Versioned: 1` certifies all entries (including an
+empty array); malformed or failed reads fail identification with retryable4000 rather than
+inventing zero counts. Legacy arrays hydrate without certification. Certified RESUME fetches
+again, replays, emits READ_STATE_SYNC and then RESUMED; clients merge by per-channel version.
+Lost certification or a failed refresh invalidates resume. This repairs missed publication on
+reconnect, not failed accounting before commit. After database restore, invalidate gateway
+sessions and resume buffers so a fresh READY starts the restored version history.
+
 ## What it does
 
 | Area | Behaviour |

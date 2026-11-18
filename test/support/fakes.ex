@@ -340,6 +340,13 @@ defmodule DiscordyGateway.Fakes.MessagesClient do
   alias DiscordyGateway.Fakes
 
   @impl true
+  def fetch_read_states(user_id) do
+    Fakes.record(:read_states, user_id)
+    if hook = Fakes.get(:read_states_hook), do: hook.(user_id)
+    Fakes.get({:read_states, user_id}, {:ok, %{entries: [], versioned: false}})
+  end
+
+  @impl true
   def create_call_message(channel_id, author_id, participants) do
     Fakes.record(:messages_client, {:create, channel_id, author_id, participants})
 

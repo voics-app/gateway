@@ -1,5 +1,8 @@
 defmodule DiscordyGateway.Application.Ports.MessagesClient do
-  @moduledoc "Internal HTTP API of the `messages` service: the call system message (type 3)."
+  @moduledoc "Internal messages API: call system messages and authoritative read snapshots."
+
+  @callback fetch_read_states(user_id :: String.t()) ::
+              {:ok, %{entries: [map()], versioned: boolean()}} | {:error, term()}
 
   @doc "Posts the type 3 message of a call that just started; returns the new message id."
   @callback create_call_message(

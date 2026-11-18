@@ -5,8 +5,21 @@ defmodule DiscordyGateway.Infrastructure.Http.MessagesClient do
 
   @behaviour DiscordyGateway.Application.Ports.MessagesClient
 
+  alias DiscordyGateway.Infrastructure.Http.ReadStates
+
   # Message type CALL.
   @call_type 3
+
+  @impl true
+  def fetch_read_states(user_id) do
+    with {:ok, response} <-
+           request_response(:get, "/internal/v1/users/#{encode(user_id)}/read-states", []) do
+      ReadStates.decode(
+        response.body,
+        Req.Response.get_header(response, "x-read-state-versioned")
+      )
+    end
+  end
 
   @impl true
   def create_call_message(channel_id, author_id, participants) do
@@ -30,6 +43,14 @@ defmodule DiscordyGateway.Infrastructure.Http.MessagesClient do
   end
 
   defp request(method, path, opts) do
+    case request_response(method, path, opts) do
+      {:ok, %Req.Response{body: %{} = body}} -> {:ok, body}
+      {:ok, _response} -> {:error, :invalid_response}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp request_response(method, path, opts) do
     config = Application.fetch_env!(:discordy_gateway, :http)
 
     options =
@@ -43,8 +64,8 @@ defmodule DiscordyGateway.Infrastructure.Http.MessagesClient do
       ] ++ Keyword.get(config, :req_options, []) ++ opts
 
     case Req.request(options) do
-      {:ok, %Req.Response{status: status, body: %{} = body}} when status in 200..201 ->
-        {:ok, body}
+      {:ok, %Req.Response{status: status} = response} when status in 200..201 ->
+        {:ok, response}
 
       {:ok, %Req.Response{status: status}} ->
         {:error, {:http_status, status}}
