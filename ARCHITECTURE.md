@@ -139,11 +139,20 @@ application's bot user.
 ## Voice (P8)
 
 The guild (or DM call) process owns the voice states of its scope. On join it needs a node:
-the allocation in Valkey `voice:alloc:<id>` is reused while its node is registered in etcd,
+the allocation in Valkey `voice:alloc:<id>` is reused while its node is registered in etcd and
+passes the current health and blacklist checks,
 otherwise the least-loaded non-draining node of the region is claimed with `SET NX`, so
 concurrent joiners agree. The token is an HS256 JWT valid for 60 seconds with
 `sub, sid, srv, chn, node, e2ee`. Drain marks a node in Valkey (gateway side) and etcd
 (`/discordy/voice/drain/<node_id>`, for the node itself).
+
+`Voice.Discovery` projects node registrations, leased health observations and manual node/region
+blacklist markers from one etcd snapshot. Probe-required nodes need a healthy observation for
+their exact registration lease; legacy nodes tolerate missing observations. The directory watches
+the voice prefix and takes a linearizable snapshot every second. A two-second monotonic read
+deadline fences a paused process or stalled watch. Snapshot revisions discard older queued watch
+events. Allocation rechecks the winning node after claiming it. `NodeMonitor` still sees unhealthy
+and blacklisted nodes as registered, so excluding new joins does not evict existing callers.
 
 ## Data and guarantees
 
