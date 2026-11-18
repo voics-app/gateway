@@ -102,13 +102,36 @@ defmodule DiscordyGateway.Integration.ValkeyTest do
       assert {:ok, [_]} = PresenceStore.refresh(user, "s2")
     end
 
+    test "session values remain readable by the previous gateway during a rolling upgrade" do
+      user = "rolling-presence-#{System.unique_integer([:positive])}"
+      presence = %{status: "idle", activities: [], afk: true, platform: "mobile"}
+      assert {:ok, [_]} = PresenceStore.put(user, "phone", presence)
+      assert {:ok, stored} = Pool.command(["HGET", "presence:sessions:" <> user, "phone"])
+      legacy = Jason.decode!(stored)
+      assert legacy["status"] == "idle"
+      assert legacy["platform"] == "mobile"
+      assert legacy["afk"] == true
+      assert {:ok, []} = PresenceStore.remove(user, "phone")
+
+      assert {:ok, 1} =
+               Pool.command([
+                 "HSET",
+                 "presence:sessions:" <> user,
+                 "old",
+                 Jason.encode!(presence)
+               ])
+
+      assert {:ok, [%{status: "idle", platform: "mobile"}]} = PresenceStore.refresh(user, "old")
+      assert {:ok, []} = PresenceStore.remove(user, "old")
+    end
+
     test "refreshing the desktop cannot extend an expired phone or return a stale aggregate" do
       user = "expiry-#{System.unique_integer([:positive])}"
       desktop = %{status: "idle", activities: [], afk: true, platform: "desktop"}
       phone = %{status: "online", activities: [], afk: false, platform: "mobile"}
       assert {:ok, [_]} = PresenceStore.put(user, "desktop", desktop)
       assert {:ok, [_, _]} = PresenceStore.put(user, "phone", phone)
-      stale = %{presence: Jason.encode!(phone), expires_at: 0}
+      stale = Map.put(phone, :expires_at, 0)
       Pool.command(["HSET", "presence:sessions:" <> user, "phone", Jason.encode!(stale)])
       PresenceStore.swap_aggregate(user, %{status: "online", activities: [], client_status: %{}})
 

@@ -2,6 +2,7 @@ defmodule DiscordyGateway.Infrastructure.Valkey.PresenceStore do
   @moduledoc """
   Presence in Valkey: independently expiring entries in `presence:sessions:<user_id>` and the
   last broadcast aggregate in `presence:agg:<user_id>`. One device cannot refresh another's lease.
+  Expiry metadata is additive: older gateway replicas can still read the flat presence fields.
   """
 
   @behaviour DiscordyGateway.Application.Ports.PresenceStore
@@ -17,27 +18,30 @@ defmodule DiscordyGateway.Infrastructure.Valkey.PresenceStore do
   local time = redis.call('TIME')
   local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
   local ttl = tonumber(ARGV[1])
+  -- Preserve Jason's JSON verbatim: cjson turns empty activity arrays into objects.
+  -- This server-owned trailing field is ignored by older gateway readers.
+  local function stamp(encoded)
+    local plain = string.gsub(encoded, ',"expires_at":%d+}%s*$', '}')
+    local stamped = string.gsub(plain, '}%s*$', ',"expires_at":' .. (now + ttl) .. '}')
+    return stamped
+  end
   local entries = redis.call('HGETALL', KEYS[1])
   for i = 1, #entries, 2 do
     local value = cjson.decode(entries[i + 1])
     if value.expires_at and value.expires_at <= now then
       redis.call('HDEL', KEYS[1], entries[i])
     elseif not value.expires_at then
-      value = {presence = entries[i + 1], expires_at = now + ttl}
-      redis.call('HSET', KEYS[1], entries[i], cjson.encode(value))
+      redis.call('HSET', KEYS[1], entries[i], stamp(entries[i + 1]))
     end
   end
   if ARGV[2] == 'put' then
-    local value = {presence = ARGV[4], expires_at = now + ttl}
-    redis.call('HSET', KEYS[1], ARGV[3], cjson.encode(value))
+    redis.call('HSET', KEYS[1], ARGV[3], stamp(ARGV[4]))
   elseif ARGV[2] == 'remove' then
     redis.call('HDEL', KEYS[1], ARGV[3])
   elseif ARGV[2] == 'refresh' then
     local previous = redis.call('HGET', KEYS[1], ARGV[3])
     if previous then
-      local value = cjson.decode(previous)
-      value.expires_at = now + ttl
-      redis.call('HSET', KEYS[1], ARGV[3], cjson.encode(value))
+      redis.call('HSET', KEYS[1], ARGV[3], stamp(previous))
     end
   end
   if ARGV[2] == 'put' or ARGV[2] == 'refresh' then
@@ -104,7 +108,7 @@ defmodule DiscordyGateway.Infrastructure.Valkey.PresenceStore do
         arguments
 
   defp decode_sessions(values),
-    do: Enum.map(values, fn value -> session_presence(decode(decode(value)["presence"])) end)
+    do: Enum.map(values, fn value -> session_presence(decode(value)) end)
 
   defp decode(json), do: Jason.decode!(json)
 
