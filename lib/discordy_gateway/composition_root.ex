@@ -13,6 +13,7 @@ defmodule DiscordyGateway.CompositionRoot do
   alias DiscordyGateway.Application.UsageTicker
   alias DiscordyGateway.Application.Voice.NodeMonitor
   alias DiscordyGateway.Infrastructure.Cluster.HordeServerDirectory
+  alias DiscordyGateway.Infrastructure.Cluster.RoutingMembership
   alias DiscordyGateway.Infrastructure.Config
   alias DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory
   alias DiscordyGateway.Infrastructure.Http.ApiClient
@@ -69,6 +70,11 @@ defmodule DiscordyGateway.CompositionRoot do
     put(:readiness, valkey: {Valkey.Pool, :ready?})
     put(:readiness_soft, etcd: {VoiceNodeDirectory, :ready?})
 
+    put(
+      :routing_readiness,
+      if(config.cluster_dns_query, do: [cluster: {RoutingMembership, :ready?}], else: [])
+    )
+
     endpoint = Application.get_env(:discordy_gateway, Endpoint, [])
     http = [ip: {0, 0, 0, 0}, port: config.port]
     Application.put_env(:discordy_gateway, Endpoint, Keyword.put(endpoint, :http, http))
@@ -99,7 +105,8 @@ defmodule DiscordyGateway.CompositionRoot do
         query ->
           [
             {Cluster.Supervisor,
-             [[gateway: dns_topology(query)], [name: DiscordyGateway.ClusterSupervisor]]}
+             [[gateway: dns_topology(query)], [name: DiscordyGateway.ClusterSupervisor]]},
+            {RoutingMembership, query: query}
           ]
       end
 

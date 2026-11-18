@@ -24,6 +24,37 @@ HTTP endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics`, and (with `X-Inte
 `GET /internal/v1/admin/stats`, `POST /internal/v1/voice/nodes/{id}/drain`,
 `POST /internal/v1/voice/nodes/{id}/undrain`.
 
+## Multiple gateway replicas
+
+Every gateway pod needs a unique `POD_IP`, the same `RELEASE_COOKIE`, and a
+`CLUSTER_DNS_QUERY` resolving the headless Service, including unready pods. EPMD and
+Erlang distribution must be reachable between pods. Keep one shared Kafka consumer group
+per topic: its consumer routes through the cluster-wide session and guild directories.
+
+With discovery configured, `/readyz` includes `cluster`. Admission returns retryable close
+4015 until discovered nodes are connected and session directories have exchanged membership.
+A partitioned consumer holds its pending event without acknowledging it until routing recovers.
+`discordy_gateway_cluster_ready` exports this gate. A DNS failure also closes the gate.
+
+RESUME through a different replica reattaches the original session process. If that process
+dies, clients must IDENTIFY again: the replay buffer alone cannot reconstruct authentication,
+subscriptions and voice membership. IDs are UUIDv4/v7; this service does not use its optional
+`SNOWFLAKE_WORKER_ID` setting.
+
+Run the two-node proof, including real WebSocket reconnect, partition recovery, fan-out and
+concurrent IDs:
+
+```sh
+elixir --sname gateway_cluster --erl '+S 2' -S mix test --include cluster test/integration/cluster_test.exs
+```
+
+Set `KAFKA_TEST_HOST` and `KAFKA_TEST_PORT` to a disposable broker with the P6 topics to route
+the fan-out test through two real Kafka consumers; without them it enters at `Events.Ingest`.
+
+Voice allocation excludes nodes with duplicate IDs, WebSocket URLs, or public IP/UDP-port
+pairs, including cached allocations. Each voice endpoint must route to its selected signaling
+process and SFU; a generic round-robin voice Service cannot provide that affinity.
+
 ## Run locally
 
 Start the infrastructure from `gitops/local` (`docker compose --profile deps up -d`), then:

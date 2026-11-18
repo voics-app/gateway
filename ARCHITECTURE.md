@@ -112,6 +112,12 @@ flowchart LR
   Consumers long-poll with `max_wait_time` 500 ms and `sleep_timeout` 20 ms (`TopicConsumer.consumer_config/0`);
   brod's defaults (10 s / 1 s) added ~450 ms p50 / ~860 ms p95 to every delivery (gateway#45).
   `Deduplicator` makes routing idempotent on the envelope id.
+- **Cluster routing gate**: `RoutingMembership` resolves the existing headless-service DNS and
+  verifies every advertised peer is connected and sees this node's `:pg` marker. This also works
+  during rolling upgrades with older peers. The cached probe expires after two seconds and
+  current distribution connectivity is checked on every read. `RoutingReadiness` fences socket
+  admission and pauses Kafka callbacks before ingestion/acknowledgement while the view is
+  incomplete. Shared consumers must not commit events against a partitioned session directory.
 - **Voice.NodeMonitor** diffs the etcd view every two seconds and tells every local guild and
   call process when a node vanished, so they reallocate and re-send `VOICE_SERVER_UPDATE`.
 - **InboxSweeper** and **UsageTicker** run every minute.

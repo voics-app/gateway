@@ -8,6 +8,7 @@ defmodule DiscordyGateway.Infrastructure.Kafka.TopicConsumer do
   @behaviour :brod_group_subscriber_v2
 
   alias DiscordyGateway.Application.Events.Ingest
+  alias DiscordyGateway.Application.RoutingReadiness
   alias DiscordyGateway.Contracts
   alias DiscordyGateway.Infrastructure.Kafka.Publisher
 
@@ -70,6 +71,7 @@ defmodule DiscordyGateway.Infrastructure.Kafka.TopicConsumer do
 
   @impl true
   def handle_message(message, topic_atom) do
+    :ok = RoutingReadiness.await_ready()
     Ingest.handle(topic_atom, kafka_message(message, :value))
     {:ok, :commit, topic_atom}
   end

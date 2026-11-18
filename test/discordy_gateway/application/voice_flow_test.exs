@@ -55,6 +55,25 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
 
   defp leave(client, gid), do: join(client, gid, nil)
 
+  test "allocation excludes replicas that advertise the same socket or media endpoint" do
+    Fakes.put(:voice_nodes, [
+      voice_node("socket-a", ws_url: "wss://rtc.test", users: 0),
+      voice_node("socket-b", ws_url: "wss://rtc.test:443/", users: 0),
+      voice_node("media-a", public_ip: "203.0.113.2", udp_port: 50_000),
+      voice_node("media-b", public_ip: "203.0.113.2", udp_port: 50_000),
+      voice_node("safe", public_ip: "203.0.113.2", udp_port: 50_001, users: 10)
+    ])
+
+    assert {:ok, %{node_id: "safe"}} = Allocator.allocate("unique-routes", "nl-home")
+
+    Fakes.put(:voice_nodes, [
+      voice_node("one", ws_url: "wss://shared.test"),
+      voice_node("two", ws_url: "wss://shared.test")
+    ])
+
+    assert {:error, :no_voice_nodes} = Allocator.allocate("ambiguous", "nl-home")
+  end
+
   test "joining voice allocates the least-loaded node and sends VOICE_SERVER_UPDATE" do
     setup_guild("v1")
 
