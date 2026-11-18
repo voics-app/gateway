@@ -67,6 +67,15 @@ Voice allocation excludes nodes with duplicate IDs, WebSocket URLs, or public IP
 pairs, including cached allocations. Each voice endpoint must route to its selected signaling
 process and SFU; a generic round-robin voice Service cannot provide that affinity.
 
+Prepared active-health support also checks cached allocations against node/region blacklists
+and leased probe results. A node advertising `probe_required: true` must have a healthy result
+for its exact current registration lease. Missing, unknown, stale or malformed observations
+exclude it. Legacy registrations default to no requirement; explicit unhealthy results and
+manual blacklist markers still exclude them. Existing calls keep their registered node.
+Discovery watches are backed by one linearizable snapshot per second and a two-second
+monotonic freshness limit, so a stalled watch cannot preserve allocation readiness. This
+does not start an observer or enable probe enforcement; see central ADR-0025.
+
 ### Mobile background presence
 
 P7 presence accepts `background: true` from mobile user sessions. The client sends automatic

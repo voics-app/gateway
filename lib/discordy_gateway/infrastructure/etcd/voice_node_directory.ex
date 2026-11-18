@@ -10,14 +10,15 @@ defmodule DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory do
 
   @behaviour DiscordyGateway.Application.Ports.VoiceNodeDirectory
 
-  alias DiscordyGateway.Contracts
-  alias DiscordyGateway.Domain.Voice.VoiceNode
+  alias DiscordyGateway.Domain.Voice.Discovery
 
   require Logger
 
   @table :discordy_voice_nodes
   @connection :discordy_etcd
   @retry_ms 2_000
+  @freshness_ms 2_000
+  @poll_ms 1_000
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -30,13 +31,16 @@ defmodule DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory do
   def ready?, do: GenServer.call(__MODULE__, :ready?)
 
   @impl DiscordyGateway.Application.Ports.VoiceNodeDirectory
-  def list_nodes, do: @table |> :ets.tab2list() |> Enum.map(&elem(&1, 1))
+  def list_nodes do
+    [{:view, records, _revision, ready, deadline}] = :ets.lookup(@table, :view)
+    Discovery.nodes(records, ready and now() < deadline)
+  end
 
   @impl DiscordyGateway.Application.Ports.VoiceNodeDirectory
   def get_node(node_id) do
-    case :ets.select(@table, [{{:_, %{node_id: node_id}}, [], [:"$_"]}]) do
-      [{_key, node} | _] -> {:ok, node}
-      [] -> :error
+    case Enum.find(list_nodes(), &(&1.node_id == node_id)) do
+      nil -> :error
+      node -> {:ok, node}
     end
   end
 
@@ -45,6 +49,8 @@ defmodule DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory do
   @impl GenServer
   def init(opts) do
     :ets.new(@table, [:named_table, :protected, :set, read_concurrency: true])
+    :ets.insert(@table, {:view, %{}, 0, false, 0})
+    Process.send_after(self(), :refresh_snapshot, @poll_ms)
     state = %{endpoints: Keyword.fetch!(opts, :endpoints), watch: nil, ready: false}
     {:ok, state, {:continue, :connect}}
   end
@@ -57,6 +63,14 @@ defmodule DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory do
 
   @impl GenServer
   def handle_info(:resync, state), do: {:noreply, sync(state)}
+
+  def handle_info(:refresh_snapshot, state) do
+    # A silent network partition may leave a watch open indefinitely. Linearizable snapshots
+    # and a monotonic read deadline prevent a stale healthy result from authorizing new joins.
+    ready = refresh_snapshot(state.watch != nil)
+    Process.send_after(self(), :refresh_snapshot, @poll_ms)
+    {:noreply, %{state | ready: ready}}
+  end
 
   def handle_info(message, %{watch: watch} = state) when watch != nil do
     case :eetcd_watch.watch_stream(watch, message) do
@@ -85,6 +99,7 @@ defmodule DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory do
     with :ok <- ensure_connection(state.endpoints),
          {:ok, revision} <- load(),
          {:ok, watch} <- start_watch(revision) do
+      set_ready(true)
       %{state | watch: watch, ready: true}
     else
       {:error, reason} ->
@@ -100,6 +115,7 @@ defmodule DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory do
   end
 
   defp schedule_resync(state) do
+    set_ready(false)
     Process.send_after(self(), :resync, @retry_ms)
     %{state | watch: nil, ready: false}
   end
@@ -130,13 +146,19 @@ defmodule DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory do
   defp already_started?(_reason), do: false
 
   defp load do
+    deadline = now() + @freshness_ms
+
     request =
-      @connection |> :eetcd_kv.new() |> :eetcd_kv.with_key(prefix()) |> :eetcd_kv.with_prefix()
+      @connection
+      |> :eetcd_kv.new()
+      |> :eetcd_kv.with_timeout(750)
+      |> :eetcd_kv.with_key(prefix())
+      |> :eetcd_kv.with_prefix()
 
     case :eetcd_kv.get(request) do
       {:ok, %{kvs: kvs, header: %{revision: revision}}} ->
-        :ets.delete_all_objects(@table)
-        Enum.each(kvs, &put_kv/1)
+        records = Map.new(kvs, &{&1.key, &1})
+        :ets.insert(@table, {:view, records, revision, false, deadline})
         {:ok, revision}
 
       {:error, reason} ->
@@ -158,20 +180,38 @@ defmodule DiscordyGateway.Infrastructure.Etcd.VoiceNodeDirectory do
   end
 
   defp apply_events(events) do
-    Enum.each(events, fn
-      %{type: :DELETE, kv: %{key: key}} -> :ets.delete(@table, key)
-      %{kv: kv} -> put_kv(kv)
-    end)
+    [{:view, records, revision, ready, deadline}] = :ets.lookup(@table, :view)
+
+    # Watch responses already in the mailbox may precede the latest snapshot revision.
+    {records, latest} =
+      events
+      |> Enum.filter(&(&1.kv.mod_revision > revision))
+      |> Enum.reduce({records, revision}, fn event, {acc, latest} ->
+        kv = event.kv
+
+        acc =
+          if event[:type] == :DELETE, do: Map.delete(acc, kv.key), else: Map.put(acc, kv.key, kv)
+
+        {acc, max(latest, kv.mod_revision)}
+      end)
+
+    :ets.insert(@table, {:view, records, latest, ready, deadline})
   end
 
-  defp put_kv(%{key: key, value: value}) do
-    with {:ok, raw} <- Jason.decode(value),
-         {:ok, node} <- VoiceNode.parse(raw) do
-      :ets.insert(@table, {key, node})
-    else
-      _ -> Logger.warning("ignoring malformed voice node entry #{key}")
+  defp refresh_snapshot(watching?) do
+    case load() do
+      {:ok, _revision} -> set_ready(watching?)
+      {:error, _reason} -> set_ready(false)
     end
+  catch
+    _kind, _reason -> set_ready(false)
   end
 
-  defp prefix, do: Contracts.voice_nodes_prefix()
+  defp set_ready(ready) do
+    :ets.update_element(@table, :view, {4, ready})
+    ready
+  end
+
+  defp now, do: System.monotonic_time(:millisecond)
+  defp prefix, do: "/discordy/voice/"
 end
