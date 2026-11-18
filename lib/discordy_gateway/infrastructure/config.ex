@@ -35,6 +35,8 @@ defmodule DiscordyGateway.Infrastructure.Config do
        {:ok, env["DEFAULT_VOICE_REGION"] |> blank_to_nil() |> Kernel.||("nl-home")}},
       {:e2ee_settings_unavailable_policy, e2ee_settings_policy(env)},
       {:voice_detach_grace_ms, voice_detach_grace(env)},
+      {:mobile_background_presence_ms,
+       positive_int(env, "MOBILE_BACKGROUND_PRESENCE_MS", 86_400_000)},
       {:admission_memory_fraction, admission_fraction(env)},
       {:memory_limit_bytes, memory_limit(env)},
       {:transport_backlog_limit, positive_int(env, "TRANSPORT_BACKLOG_LIMIT", 2000)},

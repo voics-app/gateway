@@ -33,6 +33,14 @@ defmodule DiscordyGateway.Application.Presence.Publisher do
     end
   end
 
+  @doc "Refreshes only this session and broadcasts removal of other expired session entries."
+  def refresh(ctx) do
+    case Ports.presence_store().refresh(ctx.user_id, ctx.session_id) do
+      {:ok, sessions} -> broadcast_if_changed(ctx, sessions)
+      {:error, _reason} -> :ok
+    end
+  end
+
   @doc "Presence of a user's friends, as PRESENCE_UPDATE payloads for READY."
   @spec friend_payloads([String.t()]) :: [map()]
   def friend_payloads(friend_ids) do
