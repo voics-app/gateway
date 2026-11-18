@@ -37,6 +37,23 @@ defmodule DiscordyGateway.Domain.Voice.VoiceNode do
 
   def parse(_raw), do: {:error, :invalid_node}
 
+  @doc "Rejects ambiguous node identities and endpoints; signaling and media require affinity."
+  @spec unique_routes([t()]) :: [t()]
+  def unique_routes(nodes) do
+    counts = nodes |> Enum.flat_map(&routes/1) |> Enum.frequencies()
+    Enum.filter(nodes, fn node -> Enum.all?(routes(node), &(counts[&1] == 1)) end)
+  end
+
+  defp routes(node) do
+    uri = URI.parse(node.ws_url)
+
+    socket =
+      {uri.scheme, uri.host, uri.port, String.trim_trailing(uri.path || "", "/"), uri.query}
+
+    routes = [{:node, node.node_id}, {:socket, socket}]
+    if node.public_ip, do: [{:media, node.public_ip, node.udp_port} | routes], else: routes
+  end
+
   @doc "Whether the node accepts new allocations (not draining in etcd nor via the gateway)."
   @spec available?(t(), MapSet.t()) :: boolean()
   def available?(%__MODULE__{} = node, drained_ids),

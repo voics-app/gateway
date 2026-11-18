@@ -7,12 +7,12 @@ defmodule DiscordyGateway.Interface.Socket do
 
   @behaviour WebSock
 
-  alias DiscordyGateway.Application.{Admission, Session}
+  alias DiscordyGateway.Application.{Admission, RoutingReadiness, Session}
   alias DiscordyGateway.Contracts
 
   @impl true
   def init(_opts) do
-    if Admission.admit?() do
+    if RoutingReadiness.ready?() and Admission.admit?() do
       start_session()
     else
       {:stop, :normal, {Contracts.close_code(:server_overloaded), ""}, %{session: nil}}

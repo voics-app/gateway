@@ -7,9 +7,11 @@ defmodule DiscordyGateway.Interface.Health do
   keeps serving without them and only the feature behind them degrades (etcd: voice allocation).
   """
 
+  alias DiscordyGateway.Application.RoutingReadiness
+
   @spec readiness() :: {:ok, map()} | {:error, map()}
   def readiness do
-    hard = run_all(:readiness)
+    hard = Map.merge(run_all(:readiness), RoutingReadiness.checks())
     checks = Map.merge(run_all(:readiness_soft), hard)
 
     if Enum.all?(hard, fn {_name, ok?} -> ok? end), do: {:ok, checks}, else: {:error, checks}
