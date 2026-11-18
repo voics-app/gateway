@@ -1,7 +1,7 @@
 defmodule DiscordyGateway.Application.SlowConsumerTest do
   use DiscordyGateway.Case, async: false
 
-  alias DiscordyGateway.Application.Session
+  alias DiscordyGateway.Application.{Session, Settings}
   alias DiscordyGateway.Fakes.ResumeStore
 
   setup do
@@ -63,10 +63,38 @@ defmodule DiscordyGateway.Application.SlowConsumerTest do
     assert length(entries) >= 100
   end
 
-  test "a reading socket is never cut" do
+  test "a paced reader stays connected at the artificial ten-frame limit" do
     client = online("1")
-    for _ <- 1..200, do: send(client.session, {:dispatch, "TYPING_START", "{}"})
-    assert await(client, "TYPING_START") == %{}
+
+    for _ <- 1..200 do
+      send(client.session, {:dispatch, "TYPING_START", "{}"})
+      assert await(client, "TYPING_START") == %{}
+    end
+
+    assert Process.alive?(client.transport)
+  end
+
+  test "a concurrent draining reader receives a burst at the default backlog limit" do
+    settings = Application.fetch_env!(:discordy_gateway, :settings)
+
+    Application.put_env(
+      :discordy_gateway,
+      :settings,
+      Keyword.delete(settings, :transport_backlog_limit)
+    )
+
+    assert Settings.transport_backlog_limit() == 2_000
+    client = online("1")
+
+    producer =
+      Task.async(fn ->
+        Enum.each(1..200, fn index ->
+          send(client.session, {:dispatch, "TYPING_START", Jason.encode!(%{"index" => index})})
+        end)
+      end)
+
+    for index <- 1..200, do: assert(await(client, "TYPING_START") == %{"index" => index})
+    assert :ok = Task.await(producer)
     assert Process.alive?(client.transport)
   end
 end

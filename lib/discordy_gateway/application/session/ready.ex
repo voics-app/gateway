@@ -20,11 +20,18 @@ defmodule DiscordyGateway.Application.Session.Ready do
       "user_settings" => ready["user_settings"] || %{},
       "user_guild_settings" => List.wrap(ready["user_guild_settings"]),
       "notes" => ready["notes"] || %{},
+      "read_state" => ready["read_state"] || [],
       "presences" => Publisher.friend_payloads(friend_ids(ready))
     }
+    |> put_read_authority(ready)
     |> put_application(identity)
     |> put_turn(identity)
   end
+
+  defp put_read_authority(payload, %{"read_state_versioned" => true}),
+    do: Map.put(payload, "read_state_versioned", true)
+
+  defp put_read_authority(payload, _ready), do: payload
 
   @doc "Whether the user has the `e2ee_calls_default` account setting on (every call is E2EE)."
   @spec e2ee_calls_default?(map()) :: boolean()
