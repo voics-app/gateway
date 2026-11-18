@@ -4,6 +4,7 @@ defmodule DiscordyGateway.Integration.EtcdTest do
   @moduletag :integration
 
   alias DiscordyGateway.Containers
+  alias DiscordyGateway.Domain.Voice.VoiceNode
   alias DiscordyGateway.Infrastructure.Etcd.{VoiceNodeControl, VoiceNodeDirectory}
 
   @prefix "/discordy/voice/nodes/"
@@ -17,10 +18,24 @@ defmodule DiscordyGateway.Integration.EtcdTest do
       "http://0.0.0.0:2379"
     ]
 
-    {_name, port} =
-      Containers.start("quay.io/coreos/etcd:v3.6.5", 2379, args, "ready to serve client requests")
+    endpoint =
+      case System.get_env("ETCD_TEST_ENDPOINT") do
+        nil ->
+          {_name, port} =
+            Containers.start(
+              "quay.io/coreos/etcd:v3.6.5",
+              2379,
+              args,
+              "ready to serve client requests"
+            )
 
-    start_supervised!({VoiceNodeDirectory, endpoints: [~c"127.0.0.1:#{port}"]})
+          ~c"127.0.0.1:#{port}"
+
+        value ->
+          String.to_charlist(value)
+      end
+
+    start_supervised!({VoiceNodeDirectory, endpoints: [endpoint]})
     await(&VoiceNodeDirectory.ready?/0)
     :ok
   end
@@ -85,6 +100,87 @@ defmodule DiscordyGateway.Integration.EtcdTest do
 
     assert :ok = VoiceNodeControl.undrain("n7")
     {:ok, %{kvs: []}} = :eetcd_kv.get(VoiceNodeDirectory.connection(), "/discordy/voice/drain/n7")
+  end
+
+  test "health watches are lease-fenced, fresh and independent from node membership" do
+    conn = VoiceNodeDirectory.connection()
+    {:ok, %{ID: registration_lease}} = :eetcd_lease.grant(conn, 30)
+    {:ok, %{ID: observer_lease}} = :eetcd_lease.grant(conn, 30)
+    key = @prefix <> "health/health-node"
+    health_key = "/discordy/voice/health/health-node"
+    blacklist_key = "/discordy/voice/blacklist/regions/health"
+
+    on_exit(fn ->
+      :eetcd_kv.delete(conn, blacklist_key)
+      :eetcd_lease.revoke(conn, registration_lease)
+      :eetcd_lease.revoke(conn, observer_lease)
+    end)
+
+    put_leased(
+      key,
+      %{
+        node_id: "health-node",
+        region: "health",
+        ws_url: "ws://health-node",
+        probe_required: true
+      },
+      registration_lease
+    )
+
+    await(fn -> match?({:ok, _}, VoiceNodeDirectory.get_node("health-node")) end)
+    refute healthy?("health-node")
+
+    health = %{
+      node_id: "health-node",
+      registration_lease: Integer.to_string(registration_lease),
+      prober_id: "test",
+      status: "healthy",
+      consecutive_failures: 0,
+      consecutive_passes: 2,
+      checked_at_ms: 0
+    }
+
+    put_leased(health_key, %{health | registration_lease: "1"}, observer_lease)
+    Process.sleep(100)
+    refute healthy?("health-node")
+    put_leased(health_key, health, observer_lease)
+    await(fn -> healthy?("health-node") end)
+
+    :sys.suspend(VoiceNodeDirectory)
+
+    try do
+      Process.sleep(2_050)
+      refute healthy?("health-node")
+      assert "health-node" in Enum.map(VoiceNodeDirectory.list_nodes(), & &1.node_id)
+    after
+      :sys.resume(VoiceNodeDirectory)
+    end
+
+    await(fn -> healthy?("health-node") end)
+
+    {:ok, _} = :eetcd_kv.put(conn, blacklist_key, "malformed marker still excludes")
+    await(fn -> not healthy?("health-node") end)
+    {:ok, _} = :eetcd_kv.delete(conn, blacklist_key)
+    await(fn -> healthy?("health-node") end)
+    {:ok, _} = :eetcd_lease.revoke(conn, observer_lease)
+    await(fn -> not healthy?("health-node") end)
+    assert {:ok, _node} = VoiceNodeDirectory.get_node("health-node")
+  end
+
+  defp put_leased(key, value, lease) do
+    ctx =
+      VoiceNodeDirectory.connection()
+      |> :eetcd_kv.new()
+      |> :eetcd_kv.with_key(key)
+      |> :eetcd_kv.with_value(Jason.encode!(value))
+      |> :eetcd_kv.with_lease(lease)
+
+    {:ok, _} = :eetcd_kv.put(ctx)
+  end
+
+  defp healthy?(id) do
+    {:ok, node} = VoiceNodeDirectory.get_node(id)
+    VoiceNode.healthy?(node)
   end
 
   test "recovers when the directory restarts while the eetcd connection survives" do

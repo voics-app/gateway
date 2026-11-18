@@ -12,12 +12,18 @@ defmodule DiscordyGateway.Domain.Voice.VoiceNode do
     users: 0,
     cpu_pct: 0.0,
     egress_bps: 0,
-    draining: false
+    draining: false,
+    probe_required: false,
+    health: :unknown,
+    blacklisted: false
   ]
 
   @type t :: %__MODULE__{}
 
   @spec parse(map()) :: {:ok, t()} | {:error, :invalid_node}
+  def parse(%{"probe_required" => value}) when not is_boolean(value),
+    do: {:error, :invalid_node}
+
   def parse(%{"node_id" => id, "region" => region, "ws_url" => ws_url} = raw)
       when is_binary(id) and is_binary(region) and is_binary(ws_url) do
     {:ok,
@@ -31,7 +37,8 @@ defmodule DiscordyGateway.Domain.Voice.VoiceNode do
        users: number(raw["users"], 0),
        cpu_pct: number(raw["cpu_pct"], 0.0),
        egress_bps: number(raw["egress_bps"], 0),
-       draining: raw["draining"] == true
+       draining: raw["draining"] == true,
+       probe_required: raw["probe_required"] == true
      }}
   end
 
@@ -57,7 +64,14 @@ defmodule DiscordyGateway.Domain.Voice.VoiceNode do
   @doc "Whether the node accepts new allocations (not draining in etcd nor via the gateway)."
   @spec available?(t(), MapSet.t()) :: boolean()
   def available?(%__MODULE__{} = node, drained_ids),
-    do: not node.draining and not MapSet.member?(drained_ids, node.node_id)
+    do: healthy?(node) and not node.draining and not MapSet.member?(drained_ids, node.node_id)
+
+  @doc "Allocation health, independently of registration and existing-call drain policy."
+  @spec healthy?(t()) :: boolean()
+  def healthy?(%__MODULE__{blacklisted: true}), do: false
+  def healthy?(%__MODULE__{health: :unhealthy}), do: false
+  def healthy?(%__MODULE__{probe_required: true, health: status}), do: status == :healthy
+  def healthy?(%__MODULE__{}), do: true
 
   @doc "P8 step 2: lowest `users` in the region, ties broken by `cpu_pct` then id."
   @spec pick_least_loaded([t()], String.t(), MapSet.t()) :: {:ok, t()} | {:error, :no_voice_nodes}

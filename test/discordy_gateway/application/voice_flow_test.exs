@@ -203,6 +203,29 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
     assert {:error, :no_voice_nodes} = Allocator.allocate("srv-1", "nl-home")
   end
 
+  test "new joins recheck health and blacklist for cached allocations without disconnecting callers" do
+    setup_guild("health-guild")
+    a = voice_node("a", region: "us-east")
+    b = voice_node("b", region: "us-east", users: 5)
+    Fakes.put(:voice_nodes, [a, b])
+    assert {:ok, %{node_id: "a"}} = Allocator.allocate("health-guild", "us-east")
+
+    {:ok, monitor} =
+      start_supervised({NodeMonitor, name: :health_node_monitor, interval_ms: 60_000})
+
+    alice = online_in("health-guild", "2")
+    join(alice, "health-guild", "12")
+    assert %{"token" => "voice-token:2:a:false"} = await(alice, "VOICE_SERVER_UPDATE")
+
+    Fakes.put(:voice_nodes, [Map.put(a, :health, :unhealthy), b])
+    :ok = NodeMonitor.check_now(monitor)
+    assert :none = await(alice, "VOICE_SERVER_UPDATE", 100)
+    assert {:ok, %{node_id: "b"}} = Allocator.allocate("health-guild", "us-east")
+
+    Fakes.put(:voice_nodes, [Map.put(a, :blacklisted, true), Map.put(b, :blacklisted, true)])
+    assert {:error, :no_voice_nodes} = Allocator.allocate("health-guild", "us-east")
+  end
+
   test "when the node disappears the guild reallocates and re-sends VOICE_SERVER_UPDATE" do
     setup_guild("v7")
     Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])

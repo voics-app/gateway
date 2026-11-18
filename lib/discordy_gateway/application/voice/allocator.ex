@@ -42,8 +42,6 @@ defmodule DiscordyGateway.Application.Voice.Allocator do
     end
   end
 
-  defp resolve_winner(%VoiceNode{node_id: id} = node, id), do: {:ok, node}
-
   defp resolve_winner(_node, winner) do
     case find_node(winner) do
       %VoiceNode{} = node -> {:ok, node}
@@ -51,6 +49,8 @@ defmodule DiscordyGateway.Application.Voice.Allocator do
     end
   end
 
-  defp find_node(id), do: Enum.find(routable_nodes(), &(&1.node_id == id))
+  defp find_node(id),
+    do: Enum.find(routable_nodes(), &(&1.node_id == id and VoiceNode.healthy?(&1)))
+
   defp routable_nodes, do: VoiceNode.unique_routes(Ports.voice_nodes().list_nodes())
 end
