@@ -3,7 +3,7 @@ defmodule DiscordyGateway.Interface.SocketTest do
 
   alias DiscordyGateway.Application.Admission
   alias DiscordyGateway.Fakes.MemoryProbe
-  alias DiscordyGateway.Interface.Router
+  alias DiscordyGateway.Interface.{Router, Socket}
 
   setup do
     {:ok, server} = Bandit.start_link(plug: Router, port: 0, ip: :loopback)
@@ -90,11 +90,12 @@ defmodule DiscordyGateway.Interface.SocketTest do
     ]
 
     for frame <- frames do
-      assert {:push, {:binary, bytes}, ^state} =
-               DiscordyGateway.Interface.Socket.handle_info(
-                 {:gw_frame, Jason.encode!(frame)},
-                 state
-               )
+      original = Jason.encode!(frame)
+      assert {:push, {:binary, bytes}, ^state} = Socket.handle_info({:gw_frame, original}, state)
+
+      IO.puts(
+        "compression sample #{frame["t"]}: #{byte_size(original)} plain / #{byte_size(bytes)} compressed bytes"
+      )
 
       assert {:continue, json} = :zstd.stream(decoder, bytes)
       assert Jason.decode!(json) == frame
