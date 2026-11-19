@@ -338,7 +338,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
   test "passive sessions require certified reads and cannot replay after reconnect" do
     {legacy, _} = connect()
     identify(legacy, "1", %{"passive" => true})
-    assert_receive {:gw_close, 4000}
+    assert_receive {:gw_close, 4000}, 1_000
 
     Fakes.put({:read_states, "1"}, {:ok, %{entries: [], versioned: true}})
     {session, _} = connect()
