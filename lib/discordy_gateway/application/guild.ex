@@ -283,6 +283,50 @@ defmodule DiscordyGateway.Application.Guild do
   # clients learn about it through MESSAGE_DELETE_BULK; this event is never fanned out.
   defp handle_event(%EventEnvelope{type: "BAN_MESSAGE_PURGE"}, state), do: {:noreply, state}
 
+  defp handle_event(%EventEnvelope{type: "THREAD_MEMBERS_UPDATE", data: data} = envelope, state) do
+    updated = GuildState.apply_event(state.cache, "THREAD_MEMBERS_UPDATE", data)
+
+    if updated != state.cache do
+      public_data = Map.drop(data, ["_membership_version", "_member_ids"])
+      fanout(state, "THREAD_MEMBERS_UPDATE", public_data, envelope.channel_id, updated)
+      notify_thread_visibility_changes(state, updated, data)
+    end
+
+    {:noreply, %{state | cache: updated}}
+  end
+
+  defp notify_thread_visibility_changes(state, updated, data) do
+    id = data["id"]
+    now = System.os_time(:millisecond)
+    channel = GuildState.channel(updated, id)
+
+    for {_pid, %{sub: sub}} <- state.subs,
+        Intents.allows?(sub.intents, "THREAD_CREATE", :guild) do
+      before =
+        Permissions.has?(
+          GuildState.channel_permissions(state.cache, sub.user_id, id, now),
+          :view_channel
+        )
+
+      after_change =
+        Permissions.has?(
+          GuildState.channel_permissions(updated, sub.user_id, id, now),
+          :view_channel
+        )
+
+      cond do
+        not before and after_change and is_map(channel) ->
+          Dispatch.to_sessions([sub.pid], "THREAD_CREATE", channel)
+
+        before and not after_change ->
+          Dispatch.to_sessions([sub.pid], "THREAD_DELETE", %{"id" => id, "guild_id" => state.id})
+
+        true ->
+          :ok
+      end
+    end
+  end
+
   defp handle_event(%EventEnvelope{type: type, data: data} = envelope, state) do
     updated = GuildState.apply_event(state.cache, type, data)
     plan_cache = if type in @remove_events, do: state.cache, else: updated
