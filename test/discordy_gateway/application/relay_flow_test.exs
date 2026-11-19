@@ -13,6 +13,7 @@ defmodule DiscordyGateway.Application.RelayFlowTest do
          %{
            "guild_id" => nil,
            "delivery_mode" => mode,
+           "permissions" => "3072",
            "recipient_ids" => users,
            "channel_type" => 1
          }}
@@ -38,6 +39,14 @@ defmodule DiscordyGateway.Application.RelayFlowTest do
   end
 
   describe "E2EE relay" do
+    test "a member without send permission cannot relay ciphertext" do
+      access("c1", "ephemeral")
+      Fakes.put({:access, "c1", "2"}, {:ok, %{"permissions" => "1024", "channel_type" => 0}})
+      sender = online("2")
+      send_frame(sender.session, 20, envelope())
+      assert %{"reason" => "missing_permissions"} = await(sender, "E2EE_ENVELOPE_REJECTED")
+      assert {:ok, []} = Ports.inbox_store().list("dev-3")
+    end
     test "delivers each online device only its own entry and stores every entry in the inbox" do
       access("c1", "ephemeral")
       sender = online("2")
@@ -158,6 +167,15 @@ defmodule DiscordyGateway.Application.RelayFlowTest do
         },
         overrides
       )
+    end
+
+    test "a member without send permission cannot establish a peer connection" do
+      access("c2", "p2p")
+      Fakes.put({:access, "c2", "2"}, {:ok, %{"permissions" => "1024", "channel_type" => 0}})
+      sender = online("2")
+      _receiver = online("3")
+      send_frame(sender.session, 22, signal())
+      assert %{"error" => "peer_offline"} = await(sender, "P2P_SIGNAL_FAILED")
     end
 
     test "is relayed to the online target device and never stored" do

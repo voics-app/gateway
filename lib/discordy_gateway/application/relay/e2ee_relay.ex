@@ -7,6 +7,7 @@ defmodule DiscordyGateway.Application.Relay.E2eeRelay do
 
   alias DiscordyGateway.Application.{Dispatch, Ports}
   alias DiscordyGateway.Application.Session.Identity
+  alias DiscordyGateway.Application.Relay.SendAccess
   alias DiscordyGateway.Contracts
   alias DiscordyGateway.Domain.Relay.E2ee
 
@@ -44,7 +45,8 @@ defmodule DiscordyGateway.Application.Relay.E2eeRelay do
 
   defp authorize(identity, envelope) do
     with {:ok, access} <-
-           Ports.api_client().fetch_channel_access(envelope.channel_id, identity.user_id) do
+           Ports.api_client().fetch_channel_access(envelope.channel_id, identity.user_id),
+         :ok <- SendAccess.authorize(access) do
       allowed = MapSet.new([identity.user_id | List.wrap(access["recipient_ids"])])
       sender = %{user_id: identity.user_id, device_id: identity.device_id}
       E2ee.authorize(envelope, sender, access["delivery_mode"], allowed)
