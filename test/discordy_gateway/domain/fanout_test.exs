@@ -57,6 +57,23 @@ defmodule DiscordyGateway.Domain.FanoutTest do
     assert targets(plan) == [:alice, :owner]
   end
 
+  test "thread events stop reaching subscribers after the parent is removed", %{
+    state: state,
+    subs: subs
+  } do
+    for type <- [11, 12] do
+      thread = %{"id" => "21", "type" => type, "parent_id" => "10", "owner_id" => "2"}
+
+      state =
+        state
+        |> GuildState.apply_event("THREAD_CREATE", thread)
+        |> GuildState.apply_event("CHANNEL_DELETE", %{"id" => "10"})
+
+      assert Fanout.plan(state, subs, "THREAD_UPDATE", thread, nil, 0) == []
+      assert Fanout.plan(state, subs, "MESSAGE_CREATE", %{"channel_id" => "21"}, "21", 0) == []
+    end
+  end
+
   test "private thread events and messages are hidden from other members", %{
     state: state,
     subs: subs

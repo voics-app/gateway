@@ -95,6 +95,27 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
       assert GuildState.channel_permissions(state, "2", "13", 0) != 0
     end
 
+    test "threads fail closed after their parent is removed", %{state: state} do
+      state =
+        state
+        |> GuildState.apply_event("THREAD_CREATE", %{
+          "id" => "21",
+          "type" => 11,
+          "parent_id" => "10"
+        })
+        |> GuildState.apply_event("THREAD_CREATE", %{
+          "id" => "22",
+          "type" => 12,
+          "parent_id" => "10",
+          "owner_id" => "2"
+        })
+        |> GuildState.apply_event("CHANNEL_DELETE", %{"id" => "10"})
+
+      for thread <- ~w(21 22), user <- ~w(1 2 3) do
+        assert GuildState.channel_permissions(state, user, thread, 0) == 0
+      end
+    end
+
     test "private threads require ownership or manage threads", %{state: state} do
       state =
         state
