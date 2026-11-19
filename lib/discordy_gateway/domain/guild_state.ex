@@ -117,8 +117,9 @@ defmodule DiscordyGateway.Domain.GuildState do
         "id" => id,
         "_membership_version" => version,
         "_member_ids" => users
-      }) do
-    if version > Map.get(state.thread_versions, id, -1) do
+      })
+      when is_binary(id) and is_integer(version) and version >= 0 and is_list(users) do
+    if Enum.all?(users, &is_binary/1) and version > Map.get(state.thread_versions, id, -1) do
       %{
         state
         | thread_members: Map.put(state.thread_members, id, MapSet.new(users)),
