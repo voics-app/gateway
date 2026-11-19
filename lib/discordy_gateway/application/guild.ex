@@ -11,8 +11,7 @@ defmodule DiscordyGateway.Application.Guild do
   use GenServer, restart: :temporary
 
   alias DiscordyGateway.Application.{Dispatch, Ids, Pipeline, Ports, Settings}
-  alias DiscordyGateway.Application.Voice.{Effects, Room}
-  alias DiscordyGateway.Application.Voice.ActivityReporter
+  alias DiscordyGateway.Application.Voice.{ActivityReporter, Effects, Room}
   alias DiscordyGateway.Domain.Events.EventEnvelope
   alias DiscordyGateway.Domain.{Fanout, GuildState, Intents, Permissions, Presence, Subscriber}
   alias DiscordyGateway.Domain.Voice.{VoiceStates, VoiceTokenClaims}
