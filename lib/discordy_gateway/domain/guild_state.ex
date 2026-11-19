@@ -122,7 +122,8 @@ defmodule DiscordyGateway.Domain.GuildState do
   @spec channel_permissions(t(), String.t(), String.t(), integer()) :: non_neg_integer()
   def channel_permissions(state, user_id, channel_id, now_ms) do
     with {:ok, member} <- Map.fetch(state.members, user_id),
-         {:ok, channel} <- Map.fetch(state.channels, channel_id) do
+         {:ok, channel} <- Map.fetch(state.channels, channel_id),
+         true <- thread_parent_present?(state, channel) do
       permissions =
         Permissions.compute_channel(%{
           owner_id: state.owner_id,
@@ -141,9 +142,16 @@ defmodule DiscordyGateway.Domain.GuildState do
         permissions
       end
     else
-      :error -> 0
+      _ -> 0
     end
   end
+
+  defp thread_parent_present?(state, %{"type" => type, "parent_id" => parent})
+       when type in @thread_types and is_binary(parent),
+       do: Map.has_key?(state.channels, parent)
+
+  defp thread_parent_present?(_state, %{"type" => type}) when type in @thread_types, do: false
+  defp thread_parent_present?(_state, _channel), do: true
 
   @doc "Whether the channel is a voice or stage channel."
   @spec voice_channel?(t(), String.t()) :: boolean()
