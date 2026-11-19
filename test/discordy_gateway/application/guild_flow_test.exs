@@ -61,6 +61,26 @@ defmodule DiscordyGateway.Application.GuildFlowTest do
   end
 
   describe "GUILD_CREATE" do
+    test "omits public and private threads when their parent has been deleted" do
+      gid = "missing-thread-parent"
+
+      payload =
+        guild_with_bot(gid)
+        |> Map.put("threads", [
+          %{"id" => "21", "type" => 11, "parent_id" => "10"},
+          %{"id" => "22", "type" => 12, "parent_id" => "10", "owner_id" => "2"}
+        ])
+
+      Fakes.put({:guild, gid}, {:ok, payload})
+      for user <- ~w(2 3), do: Fakes.put({:ready, user}, ready_for(user, [payload]))
+      owner = online_in(gid, "2")
+      publish(:guild, "CHANNEL_DELETE", %{"id" => "10", "guild_id" => gid}, %{"guild_id" => gid})
+      assert %{"id" => "10"} = await(owner, "CHANNEL_DELETE")
+
+      assert %{"threads" => threads} = await(online("3"), "GUILD_CREATE")
+      refute Enum.any?(threads, &(&1["id"] in ~w(21 22)))
+    end
+
     test "hides private threads even when their parent is visible" do
       payload =
         guild_with_bot("private-thread")
