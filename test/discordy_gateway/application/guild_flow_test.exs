@@ -61,6 +61,24 @@ defmodule DiscordyGateway.Application.GuildFlowTest do
   end
 
   describe "GUILD_CREATE" do
+    test "hides private threads even when their parent is visible" do
+      payload =
+        guild_with_bot("private-thread")
+        |> Map.put("threads", [
+          %{"id" => "21", "type" => 12, "parent_id" => "10", "owner_id" => "2"}
+        ])
+
+      Fakes.put({:guild, "private-thread"}, {:ok, payload})
+      for user <- ~w(1 2 3), do: Fakes.put({:ready, user}, ready_for(user, [payload]))
+
+      assert %{"threads" => outsider_threads} = await(online("3"), "GUILD_CREATE")
+      refute Enum.any?(outsider_threads, &(&1["id"] == "21"))
+      assert %{"threads" => creator_threads} = await(online("2"), "GUILD_CREATE")
+      assert Enum.any?(creator_threads, &(&1["id"] == "21"))
+      assert %{"threads" => owner_threads} = await(online("1"), "GUILD_CREATE")
+      assert Enum.any?(owner_threads, &(&1["id"] == "21"))
+    end
+
     test "hides channels the member cannot view" do
       setup_guild("g1")
       outsider = online("3")
@@ -68,9 +86,9 @@ defmodule DiscordyGateway.Application.GuildFlowTest do
       assert Enum.sort(Enum.map(channels, & &1["id"])) == ["10", "12"]
 
       staff = online("2")
-      assert %{"channels" => channels} = await(staff, "GUILD_CREATE")
+      assert %{"channels" => channels, "threads" => threads} = await(staff, "GUILD_CREATE")
       assert "11" in Enum.map(channels, & &1["id"])
-      assert "13" in Enum.map(channels, & &1["id"])
+      assert "13" in Enum.map(threads, & &1["id"])
     end
 
     test "is loaded lazily from the api when READY carries only the guild id" do
@@ -90,6 +108,57 @@ defmodule DiscordyGateway.Application.GuildFlowTest do
   end
 
   describe "event fan-out" do
+    test "membership changes grant and revoke private thread visibility" do
+      gid = "thread-members"
+
+      payload =
+        guild_with_bot(gid)
+        |> Map.put("threads", [
+          %{"id" => "21", "type" => 12, "parent_id" => "10", "owner_id" => "2"}
+        ])
+        |> Map.put("thread_members", %{"21" => %{"version" => 1, "user_ids" => ["2"]}})
+
+      Fakes.put({:guild, gid}, {:ok, payload})
+      for user <- ~w(2 3), do: Fakes.put({:ready, user}, ready_for(user, [payload]))
+      owner = online_in(gid, "2")
+      member = online_in(gid, "3")
+
+      publish(
+        :guild,
+        "THREAD_MEMBERS_UPDATE",
+        %{
+          "id" => "21",
+          "guild_id" => gid,
+          "added_members" => [%{"user_id" => "3"}],
+          "removed_member_ids" => [],
+          "_membership_version" => 2,
+          "_member_ids" => ["2", "3"]
+        },
+        %{"guild_id" => gid, "channel_id" => "21"}
+      )
+
+      assert %{"id" => "21"} = await(member, "THREAD_CREATE")
+      assert %{"id" => "21"} = public_update = await(owner, "THREAD_MEMBERS_UPDATE")
+      refute Map.has_key?(public_update, "_member_ids")
+      refute Map.has_key?(public_update, "_membership_version")
+
+      publish(
+        :guild,
+        "THREAD_MEMBERS_UPDATE",
+        %{
+          "id" => "21",
+          "guild_id" => gid,
+          "added_members" => [],
+          "removed_member_ids" => ["3"],
+          "_membership_version" => 3,
+          "_member_ids" => ["2"]
+        },
+        %{"guild_id" => gid, "channel_id" => "21"}
+      )
+
+      assert %{"id" => "21"} = await(member, "THREAD_DELETE")
+    end
+
     test "delivers channel events only to members who can view the channel" do
       setup_guild("g10")
       staff = online_in("g10", "2")

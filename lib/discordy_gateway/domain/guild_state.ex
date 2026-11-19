@@ -16,6 +16,8 @@ defmodule DiscordyGateway.Domain.GuildState do
             roles: %{},
             role_permissions: %{},
             channels: %{},
+            thread_members: %{},
+            thread_versions: %{},
             overwrites: %{},
             members: %{}
 
@@ -25,7 +27,7 @@ defmodule DiscordyGateway.Domain.GuildState do
   @spec from_payload(map()) :: t()
   def from_payload(%{"guild" => guild} = payload) when is_map(guild) do
     guild
-    |> Map.merge(Map.take(payload, ["roles", "channels", "members"]))
+    |> Map.merge(Map.take(payload, ["roles", "channels", "threads", "thread_members", "members"]))
     |> Map.put("voice_region", Map.get(payload, "voice_region", guild["voice_region"]))
     |> from_payload()
   end
@@ -35,18 +37,31 @@ defmodule DiscordyGateway.Domain.GuildState do
       id: payload["id"],
       owner_id: payload["owner_id"],
       voice_region: payload["voice_region"],
-      guild: Map.drop(payload, ["roles", "channels", "members"])
+      guild: Map.drop(payload, ["roles", "channels", "threads", "thread_members", "members"]),
+      thread_members:
+        Map.new(payload["thread_members"] || %{}, fn {id, entry} ->
+          {id, MapSet.new(entry["user_ids"] || [])}
+        end),
+      thread_versions:
+        Map.new(payload["thread_members"] || %{}, fn {id, entry} ->
+          {id, entry["version"] || 0}
+        end)
     }
 
     base = Enum.reduce(List.wrap(payload["roles"]), base, &put_role(&2, &1))
     base = Enum.reduce(List.wrap(payload["channels"]), base, &put_channel(&2, &1))
+    base = Enum.reduce(List.wrap(payload["threads"]), base, &put_channel(&2, &1))
     Enum.reduce(List.wrap(payload["members"]), base, &put_member(&2, &1))
   end
 
   @doc "Applies a guild-topic event to the cache. Unrelated events leave it unchanged."
   @spec apply_event(t(), String.t(), map()) :: t()
   def apply_event(state, "GUILD_UPDATE", data) do
-    guild = Map.merge(state.guild, Map.drop(data, ["roles", "channels", "members"]))
+    guild =
+      Map.merge(
+        state.guild,
+        Map.drop(data, ["roles", "channels", "threads", "thread_members", "members"])
+      )
 
     %{
       state
@@ -64,6 +79,8 @@ defmodule DiscordyGateway.Domain.GuildState do
     do: %{
       state
       | channels: Map.delete(state.channels, id),
+        thread_members: Map.delete(state.thread_members, id),
+        thread_versions: Map.delete(state.thread_versions, id),
         overwrites: Map.delete(state.overwrites, id)
     }
 
@@ -103,8 +120,30 @@ defmodule DiscordyGateway.Domain.GuildState do
     put_member(state, Map.merge(existing, Map.delete(data, "guild_id")))
   end
 
-  def apply_event(state, "GUILD_MEMBER_REMOVE", data),
-    do: %{state | members: Map.delete(state.members, get_in(data, ["user", "id"]))}
+  def apply_event(state, "GUILD_MEMBER_REMOVE", data) do
+    user_id = get_in(data, ["user", "id"])
+
+    memberships =
+      Map.new(state.thread_members, fn {id, users} -> {id, MapSet.delete(users, user_id)} end)
+
+    %{state | members: Map.delete(state.members, user_id), thread_members: memberships}
+  end
+
+  def apply_event(state, "THREAD_MEMBERS_UPDATE", %{
+        "id" => id,
+        "_membership_version" => version,
+        "_member_ids" => users
+      }) do
+    if version > Map.get(state.thread_versions, id, -1) do
+      %{
+        state
+        | thread_members: Map.put(state.thread_members, id, MapSet.new(users)),
+          thread_versions: Map.put(state.thread_versions, id, version)
+      }
+    else
+      state
+    end
+  end
 
   def apply_event(state, _type, _data), do: state
 
@@ -138,15 +177,24 @@ defmodule DiscordyGateway.Domain.GuildState do
   def channel_permissions(state, user_id, channel_id, now_ms) do
     with {:ok, member} <- Map.fetch(state.members, user_id),
          {:ok, channel} <- Map.fetch(state.channels, channel_id) do
-      Permissions.compute_channel(%{
-        owner_id: state.owner_id,
-        guild_id: state.id,
-        role_permissions: state.role_permissions,
-        member: member_ref(member),
-        overwrites: Map.get(state.overwrites, permission_source(state, channel), []),
-        channel_type: channel["type"] || 0,
-        timed_out: timed_out?(member, now_ms)
-      })
+      permissions =
+        Permissions.compute_channel(%{
+          owner_id: state.owner_id,
+          guild_id: state.id,
+          role_permissions: state.role_permissions,
+          member: member_ref(member),
+          overwrites: Map.get(state.overwrites, permission_source(state, channel), []),
+          channel_type: channel["type"] || 0,
+          timed_out: timed_out?(member, now_ms)
+        })
+
+      if channel["type"] == 12 and channel["owner_id"] != user_id and
+           not MapSet.member?(Map.get(state.thread_members, channel_id, MapSet.new()), user_id) and
+           not Permissions.has?(permissions, :manage_threads) do
+        0
+      else
+        permissions
+      end
     else
       :error -> 0
     end
@@ -171,12 +219,18 @@ defmodule DiscordyGateway.Domain.GuildState do
   @doc "Flat Discord guild object used for READY and GUILD_CREATE."
   @spec snapshot(t()) :: map()
   def snapshot(state) do
+    {threads, channels} =
+      state.channels
+      |> Map.values()
+      |> Enum.split_with(&(&1["type"] in @thread_types))
+
     Map.merge(state.guild, %{
       "id" => state.id,
       "owner_id" => state.owner_id,
       "voice_region" => state.voice_region,
       "roles" => Map.values(state.roles),
-      "channels" => Map.values(state.channels),
+      "channels" => channels,
+      "threads" => threads,
       "members" => Map.values(state.members),
       "member_count" => map_size(state.members)
     })

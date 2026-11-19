@@ -74,6 +74,9 @@ defmodule DiscordyGateway.Domain.Fanout do
   defp gate(event, data, _channel_id) when event in @channel_object_events,
     do: {:channel, data["id"], [:view_channel]}
 
+  defp gate("THREAD_MEMBERS_UPDATE", data, _channel_id),
+    do: {:channel, data["id"], [:view_channel]}
+
   defp gate(_event, data, channel_id) do
     case channel_id || data["channel_id"] do
       nil -> :guild_wide

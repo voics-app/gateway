@@ -264,8 +264,9 @@ defmodule DiscordyGateway.Application.Guild do
     snapshot
     |> Map.put(
       "channels",
-      Enum.filter(snapshot["channels"], &(&1["id"] in visible or thread_visible?(&1, visible)))
+      Enum.filter(snapshot["channels"], &(&1["id"] in visible))
     )
+    |> Map.put("threads", Enum.filter(snapshot["threads"], &(&1["id"] in visible)))
     |> Map.put("members", Enum.take(members, @create_member_cap))
     |> Map.put("large", length(members) > @create_member_cap)
     |> Map.put("voice_states", voice_state_payloads(state, visible))
@@ -280,11 +281,6 @@ defmodule DiscordyGateway.Application.Guild do
     )
     |> MapSet.new()
   end
-
-  defp thread_visible?(%{"parent_id" => parent}, visible) when is_binary(parent),
-    do: parent in visible
-
-  defp thread_visible?(_channel, _visible), do: false
 
   defp voice_state_payloads(state, visible) do
     state.room
@@ -317,11 +313,55 @@ defmodule DiscordyGateway.Application.Guild do
   # clients learn about it through MESSAGE_DELETE_BULK; this event is never fanned out.
   defp handle_event(%EventEnvelope{type: "BAN_MESSAGE_PURGE"}, state), do: {:noreply, state}
 
+  defp handle_event(%EventEnvelope{type: "THREAD_MEMBERS_UPDATE", data: data} = envelope, state) do
+    updated = GuildState.apply_event(state.cache, "THREAD_MEMBERS_UPDATE", data)
+
+    if updated != state.cache do
+      public_data = Map.drop(data, ["_membership_version", "_member_ids"])
+      fanout(state, "THREAD_MEMBERS_UPDATE", public_data, envelope.channel_id, updated)
+      notify_thread_visibility_changes(state, updated, data)
+    end
+
+    {:noreply, %{state | cache: updated}}
+  end
+
   defp handle_event(%EventEnvelope{type: type, data: data} = envelope, state) do
     updated = GuildState.apply_event(state.cache, type, data)
     plan_cache = if type in @remove_events, do: state.cache, else: updated
     fanout(state, type, data, envelope.channel_id, plan_cache)
     after_event(type, data, %{state | cache: updated})
+  end
+
+  defp notify_thread_visibility_changes(state, updated, data) do
+    id = data["id"]
+    now = System.os_time(:millisecond)
+    channel = GuildState.channel(updated, id)
+
+    for {_pid, %{sub: sub}} <- state.subs,
+        Intents.allows?(sub.intents, "THREAD_CREATE", :guild) do
+      before =
+        Permissions.has?(
+          GuildState.channel_permissions(state.cache, sub.user_id, id, now),
+          :view_channel
+        )
+
+      after_change =
+        Permissions.has?(
+          GuildState.channel_permissions(updated, sub.user_id, id, now),
+          :view_channel
+        )
+
+      cond do
+        not before and after_change and is_map(channel) ->
+          Dispatch.to_sessions([sub.pid], "THREAD_CREATE", channel)
+
+        before and not after_change ->
+          Dispatch.to_sessions([sub.pid], "THREAD_DELETE", %{"id" => id, "guild_id" => state.id})
+
+        true ->
+          :ok
+      end
+    end
   end
 
   defp after_event("GUILD_DELETE", _data, state) do

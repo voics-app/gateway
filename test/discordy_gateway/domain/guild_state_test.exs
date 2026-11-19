@@ -40,6 +40,46 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
   end
 
   describe "channel_permissions/4" do
+    test "private thread membership is restored and updated without exposing the internal map" do
+      payload =
+        Fixtures.guild_payload()
+        |> Map.put("threads", [
+          %{"id" => "21", "type" => 12, "parent_id" => "10", "owner_id" => "2"}
+        ])
+        |> Map.put("thread_members", %{"21" => %{"version" => 2, "user_ids" => ["3"]}})
+
+      state = GuildState.from_payload(payload)
+      assert (GuildState.channel_permissions(state, "3", "21", 0) &&& @view) != 0
+      refute Map.has_key?(GuildState.snapshot(state), "thread_members")
+
+      state =
+        GuildState.apply_event(state, "THREAD_MEMBERS_UPDATE", %{
+          "id" => "21",
+          "_membership_version" => 3,
+          "_member_ids" => []
+        })
+
+      assert GuildState.channel_permissions(state, "3", "21", 0) == 0
+
+      stale =
+        GuildState.apply_event(state, "THREAD_MEMBERS_UPDATE", %{
+          "id" => "21",
+          "_membership_version" => 2,
+          "_member_ids" => ["3"]
+        })
+
+      assert stale == state
+
+      state =
+        GuildState.apply_event(state, "THREAD_MEMBERS_UPDATE", %{
+          "id" => "21",
+          "_membership_version" => 4,
+          "_member_ids" => ["3"]
+        })
+
+      assert (GuildState.channel_permissions(state, "3", "21", 0) &&& @view) != 0
+    end
+
     test "everyone sees general", %{state: state} do
       assert (GuildState.channel_permissions(state, "3", "10", 0) &&& @view) != 0
     end
@@ -53,6 +93,43 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
     test "threads inherit their parent's permissions", %{state: state} do
       assert GuildState.channel_permissions(state, "3", "13", 0) == 0
       assert GuildState.channel_permissions(state, "2", "13", 0) != 0
+    end
+
+    test "private threads require ownership or manage threads", %{state: state} do
+      state =
+        state
+        |> GuildState.apply_event("GUILD_ROLE_CREATE", %{
+          "role" => %{"id" => "301", "permissions" => Integer.to_string(1 <<< 34)}
+        })
+        |> GuildState.apply_event("GUILD_MEMBER_ADD", %{
+          "user" => %{"id" => "4"},
+          "roles" => ["301"]
+        })
+        |> GuildState.apply_event("THREAD_CREATE", %{
+          "id" => "21",
+          "type" => 12,
+          "parent_id" => "10",
+          "owner_id" => "2"
+        })
+
+      assert GuildState.channel_permissions(state, "3", "21", 0) == 0
+      assert (GuildState.channel_permissions(state, "2", "21", 0) &&& @view) != 0
+      assert (GuildState.channel_permissions(state, "1", "21", 0) &&& @view) != 0
+      assert (GuildState.channel_permissions(state, "4", "21", 0) &&& @view) != 0
+      assert GuildState.channel_permissions(state, "999", "21", 0) == 0
+
+      state =
+        GuildState.apply_event(state, "CHANNEL_UPDATE", %{
+          "id" => "10",
+          "type" => 0,
+          "permission_overwrites" => [
+            %{"id" => "100", "type" => 0, "allow" => "0", "deny" => Integer.to_string(@view)}
+          ]
+        })
+
+      assert GuildState.channel_permissions(state, "2", "21", 0) == 0
+      assert GuildState.channel_permissions(state, "4", "21", 0) == 0
+      assert (GuildState.channel_permissions(state, "1", "21", 0) &&& @view) != 0
     end
 
     test "non-members and unknown channels get nothing", %{state: state} do
@@ -197,7 +274,8 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
     assert snap["id"] == "100"
     assert snap["name"] == "Guild"
     assert length(snap["roles"]) == 2
-    assert length(snap["channels"]) == 4
+    assert length(snap["channels"]) == 3
+    assert length(snap["threads"]) == 1
     assert length(snap["members"]) == 3
     assert snap["voice_region"] == "eu-west"
   end

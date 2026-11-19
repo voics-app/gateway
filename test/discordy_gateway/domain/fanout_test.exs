@@ -57,6 +57,21 @@ defmodule DiscordyGateway.Domain.FanoutTest do
     assert targets(plan) == [:alice, :owner]
   end
 
+  test "private thread events and messages are hidden from other members", %{
+    state: state,
+    subs: subs
+  } do
+    thread = %{"id" => "21", "type" => 12, "parent_id" => "10", "owner_id" => "2"}
+    state = GuildState.apply_event(state, "THREAD_CREATE", thread)
+
+    for event <- ~w(THREAD_CREATE THREAD_UPDATE THREAD_DELETE) do
+      assert targets(Fanout.plan(state, subs, event, thread, nil, 0)) == [:alice, :owner]
+    end
+
+    assert targets(Fanout.plan(state, subs, "MESSAGE_CREATE", %{"channel_id" => "21"}, "21", 0)) ==
+             [:alice, :owner]
+  end
+
   test "guild-wide events reach every subscriber", %{state: state, subs: subs} do
     plan = Fanout.plan(state, subs, "GUILD_UPDATE", %{"id" => "100"}, nil, 0)
     assert targets(plan) == [:alice, :bob, :owner]
