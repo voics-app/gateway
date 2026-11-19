@@ -114,9 +114,11 @@ defmodule DiscordyGateway.Application.Guild do
     handle_event(envelope, state)
   end
 
-  def handle_cast({:presence, payload, afk}, state) do
+  def handle_cast({:presence, payload, _afk}, state) do
     fanout(state, "PRESENCE_UPDATE", Map.put(payload, "guild_id", state.id), nil, state.cache)
-    {:noreply, update_afk_timer(state, get_in(payload, ["user", "id"]), afk)}
+    user_id = get_in(payload, ["user", "id"])
+    aggregate = Ports.presence_store().get_aggregates([user_id])[user_id]
+    {:noreply, update_afk_timer(state, user_id, aggregate && aggregate.afk)}
   end
 
   def handle_cast({:voice_state_update, pid, request}, state) do
