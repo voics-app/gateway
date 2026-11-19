@@ -206,3 +206,5 @@ and priority-speaker ducking are not provided by this check.
 The gateway moves a caller to a configured guild AFK channel after the guild's
 timeout when every active session reports automatic AFK. Returning on any device
 cancels the timer; missing presence fails safe and does not trigger a move.
+The countdown begins when clients report AFK, so client idle-detection delay
+adds to the configured timeout.
