@@ -125,6 +125,21 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     assert await(passive, "PASSIVE_UPDATE_V2", 100) == :none
   end
 
+  test "passive sessions require certified reads and cannot replay after reconnect" do
+    {legacy, _} = connect()
+    identify(legacy, "1", %{"passive" => true})
+    assert_receive {:gw_close, 4000}
+
+    Fakes.put({:read_states, "1"}, {:ok, %{entries: [], versioned: true}})
+    {session, _} = connect()
+    identify(session, "1", %{"passive" => true})
+    %{"d" => %{"session_id" => session_id}} = next_dispatch("READY")
+    {stub, _} = connect()
+    send_frame(stub, 6, %{"token" => "user-1", "session_id" => session_id, "seq" => 1})
+    assert %{"op" => 9, "d" => false} = next_frame()
+    refute Process.alive?(session)
+  end
+
   defp receive_frame(name, event) do
     receive do
       {:client, ^name, %{"t" => ^event} = frame} -> frame

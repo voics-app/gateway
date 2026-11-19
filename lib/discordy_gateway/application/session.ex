@@ -52,6 +52,7 @@ defmodule DiscordyGateway.Application.Session do
     seq: 0,
     read_state_versioned: false,
     passive: false,
+    passive_used: false,
     passive_token: nil,
     passive_updates: %PassiveUpdates{},
     refreshing_guilds: MapSet.new(),
@@ -118,6 +119,13 @@ defmodule DiscordyGateway.Application.Session do
   end
 
   @impl true
+  def handle_call(
+        {:resume, _transport, user_id, _seq},
+        _from,
+        %{identity: %Identity{user_id: user_id}, passive_used: true} = state
+      ),
+      do: {:stop, :normal, {:error, :passive_requires_identify}, state}
+
   def handle_call(
         {:resume, transport, user_id, seq},
         _from,
@@ -227,6 +235,12 @@ defmodule DiscordyGateway.Application.Session do
       ) do
     {:noreply, %{state | passive_updates: PassiveUpdates.read_state(state.passive_updates, data)}}
   end
+
+  def handle_info(
+        {:user_event, %EventEnvelope{type: "MESSAGE_ACK"}},
+        %{status: :identified, passive: true} = state
+      ),
+      do: {:noreply, state}
 
   def handle_info({:user_event, %EventEnvelope{} = envelope}, %{status: :identified} = state),
     do: {:noreply, user_event(state, envelope)}
@@ -519,7 +533,12 @@ defmodule DiscordyGateway.Application.Session do
     }
 
     :ok = Ports.call_defaults().put(identity.user_id, Ready.e2ee_calls_default?(ready))
-    state = if payload.passive, do: schedule_passive(%{state | passive: true}), else: state
+
+    state =
+      if payload.passive,
+        do: schedule_passive(%{state | passive: true, passive_used: true}),
+        else: state
+
     state = dispatch(state, "READY", Dispatch.encode(Ready.payload(identity, state.id, ready)))
     state = join_guilds(state, List.wrap(ready["guilds"]))
     replay_inbox(state)
@@ -567,7 +586,13 @@ defmodule DiscordyGateway.Application.Session do
     do: close(state, :unknown_error)
 
   defp change_session_mode(state, true) do
-    {:noreply, schedule_passive(%{state | passive: true, refreshing_guilds: MapSet.new()})}
+    {:noreply,
+     schedule_passive(%{
+       state
+       | passive: true,
+         passive_used: true,
+         refreshing_guilds: MapSet.new()
+     })}
   end
 
   defp change_session_mode(state, false) do
