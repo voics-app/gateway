@@ -6,8 +6,8 @@ defmodule DiscordyGateway.Application.Relay.E2eeRelay do
   """
 
   alias DiscordyGateway.Application.{Dispatch, Ports}
-  alias DiscordyGateway.Application.Session.Identity
   alias DiscordyGateway.Application.Relay.SendAccess
+  alias DiscordyGateway.Application.Session.Identity
   alias DiscordyGateway.Contracts
   alias DiscordyGateway.Domain.Relay.E2ee
 

@@ -6,8 +6,8 @@ defmodule DiscordyGateway.Application.Relay.P2pRelay do
   """
 
   alias DiscordyGateway.Application.{Dispatch, Ports}
-  alias DiscordyGateway.Application.Session.Identity
   alias DiscordyGateway.Application.Relay.SendAccess
+  alias DiscordyGateway.Application.Session.Identity
   alias DiscordyGateway.Domain.Relay.P2pSignal
 
   @call_timeout_ms 1_000
