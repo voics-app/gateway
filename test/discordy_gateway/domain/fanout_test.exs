@@ -57,7 +57,10 @@ defmodule DiscordyGateway.Domain.FanoutTest do
     assert targets(plan) == [:alice, :owner]
   end
 
-  test "private thread events and messages are hidden from other members", %{state: state, subs: subs} do
+  test "private thread events and messages are hidden from other members", %{
+    state: state,
+    subs: subs
+  } do
     thread = %{"id" => "21", "type" => 12, "parent_id" => "10", "owner_id" => "2"}
     state = GuildState.apply_event(state, "THREAD_CREATE", thread)
 
