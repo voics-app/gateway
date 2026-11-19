@@ -102,4 +102,3 @@ defmodule DiscordyGateway.Domain.IntentsTest do
     refute Intents.has?(0, :message_content)
   end
 end
-
