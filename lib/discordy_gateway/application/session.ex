@@ -251,8 +251,14 @@ defmodule DiscordyGateway.Application.Session do
   def handle_info({:join_guild, guild_id}, %{status: :identified} = state),
     do: {:noreply, join_guilds(state, [%{"id" => guild_id}])}
 
-  def handle_info({:join_rejected, guild_id}, state),
-    do: {:noreply, forget_guild(state, guild_id)}
+  def handle_info({:join_rejected, guild_id}, state) do
+    state =
+      if state.passive or MapSet.member?(state.refreshing_guilds, guild_id),
+        do: dispatch(state, "GUILD_DELETE", Dispatch.encode(%{"id" => guild_id})),
+        else: state
+
+    {:noreply, forget_guild(state, guild_id)}
+  end
 
   def handle_info({:guild_gone, guild_id}, %{passive: true} = state) do
     state = dispatch(state, "GUILD_DELETE", Dispatch.encode(%{"id" => guild_id}))
@@ -628,8 +634,12 @@ defmodule DiscordyGateway.Application.Session do
             activation_token: make_ref()
         }
 
-        state = state |> sync_read_states(reads) |> join_guilds(guilds)
-        {:noreply, state}
+        state = sync_read_states(state, reads)
+
+        case refresh_guilds(state, guilds) do
+          {:ok, refreshed} -> {:noreply, refreshed}
+          {:error, _reason} -> close(state, :unknown_error)
+        end
 
       {:error, _} ->
         close(state, :unknown_error)
@@ -915,20 +925,40 @@ defmodule DiscordyGateway.Application.Session do
   defp seed(_guild), do: nil
 
   defp join_guild(state, guild_id, seed) do
+    case subscribe_guild(state, guild_id, seed) do
+      {:ok, joined} ->
+        joined
+
+      {:error, reason} ->
+        Logger.warning("guild #{guild_id} unavailable: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp refresh_guilds(state, guilds) do
+    Enum.reduce_while(guilds, {:ok, state}, fn guild, {:ok, acc} ->
+      case subscribe_guild(acc, guild["id"], nil) do
+        {:ok, joined} -> {:cont, {:ok, joined}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp subscribe_guild(state, guild_id, seed) do
     case Guild.join(guild_id, seed, subscriber(state)) do
       {:ok, pid} ->
         state = drop_guild_monitor(state, guild_id)
         ref = Process.monitor(pid)
 
-        %{
-          state
-          | guild_ids: MapSet.put(state.guild_ids, guild_id),
-            guild_refs: Map.put(state.guild_refs, ref, guild_id)
-        }
+        {:ok,
+         %{
+           state
+           | guild_ids: MapSet.put(state.guild_ids, guild_id),
+             guild_refs: Map.put(state.guild_refs, ref, guild_id)
+         }}
 
       {:error, reason} ->
-        Logger.warning("guild #{guild_id} unavailable: #{inspect(reason)}")
-        state
+        {:error, reason}
     end
   end
 
@@ -951,7 +981,12 @@ defmodule DiscordyGateway.Application.Session do
 
   defp forget_guild(state, guild_id) do
     state = drop_guild_monitor(state, guild_id)
-    %{state | guild_ids: MapSet.delete(state.guild_ids, guild_id)}
+
+    %{
+      state
+      | guild_ids: MapSet.delete(state.guild_ids, guild_id),
+        refreshing_guilds: MapSet.delete(state.refreshing_guilds, guild_id)
+    }
   end
 
   defp drop_guild_monitor(state, guild_id) do
