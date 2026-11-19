@@ -70,6 +70,16 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
 
       assert stale == state
 
+      for invalid <- [
+            %{"id" => "21"},
+            %{"id" => "21", "_membership_version" => "4", "_member_ids" => []},
+            %{"id" => "21", "_membership_version" => -1, "_member_ids" => []},
+            %{"id" => "21", "_membership_version" => 4, "_member_ids" => nil},
+            %{"id" => "21", "_membership_version" => 4, "_member_ids" => [123]}
+          ] do
+        assert GuildState.apply_event(state, "THREAD_MEMBERS_UPDATE", invalid) == state
+      end
+
       state =
         GuildState.apply_event(state, "THREAD_MEMBERS_UPDATE", %{
           "id" => "21",
