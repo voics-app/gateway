@@ -7,4 +7,5 @@ defmodule DiscordyGateway.Application.Ports.ApiClient do
   @callback fetch_ready(user_id :: String.t()) :: result()
   @callback fetch_guild_state(guild_id :: String.t()) :: result()
   @callback fetch_channel_access(channel_id :: String.t(), user_id :: String.t()) :: result()
+  @callback voice_activity_checkpoint(map()) :: :ok | {:error, term()}
 end

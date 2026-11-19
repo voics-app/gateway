@@ -83,6 +83,16 @@ defmodule DiscordyGateway.Fakes.ApiClient do
   @impl true
   def fetch_channel_access(channel_id, user_id),
     do: Fakes.get({:access, channel_id, user_id}, {:error, :forbidden})
+
+  @impl true
+  def voice_activity_checkpoint(checkpoint) do
+    Fakes.record(:voice_checkpoint, checkpoint)
+
+    if observer = Fakes.get(:voice_checkpoint_observer),
+      do: send(observer, {:voice_checkpoint, checkpoint})
+
+    Fakes.get(:voice_checkpoint_result, :ok)
+  end
 end
 
 defmodule DiscordyGateway.Fakes.ResumeStore do
