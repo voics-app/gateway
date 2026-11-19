@@ -54,7 +54,12 @@ defmodule DiscordyGateway.Domain.Session.PassiveUpdates do
 
     %{
       state
-      | voice_states: Map.put(state.voice_states, key, Map.delete(payload, "member")),
+      | voice_states:
+          Map.put(
+            state.voice_states,
+            key,
+            payload |> Map.delete("member") |> Map.put_new("request_to_speak_timestamp", nil)
+          ),
         voice_gates: Map.put(state.voice_gates, key, gate || payload["channel_id"])
     }
   end

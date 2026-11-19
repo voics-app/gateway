@@ -82,7 +82,10 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
            ]
 
     assert delta["d"]["read_states"] == [read]
-    assert [%{"user_id" => "2", "channel_id" => "12"}] = delta["d"]["voice_states"]
+
+    assert [%{"user_id" => "2", "channel_id" => "12", "request_to_speak_timestamp" => nil}] =
+             delta["d"]["voice_states"]
+
     passive_bytes = byte_size(Jason.encode!(delta))
 
     IO.puts(

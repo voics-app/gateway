@@ -45,7 +45,12 @@ defmodule DiscordyGateway.Domain.Session.PassiveUpdatesTest do
       |> PassiveUpdates.voice_state(%{voice | "channel_id" => nil}, "4")
 
     assert PassiveUpdates.payload(changes) == %{
-             "voice_states" => [voice |> Map.put("channel_id", nil) |> Map.delete("member")]
+             "voice_states" => [
+               voice
+               |> Map.put("channel_id", nil)
+               |> Map.delete("member")
+               |> Map.put("request_to_speak_timestamp", nil)
+             ]
            }
   end
 
