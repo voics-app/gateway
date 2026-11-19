@@ -61,6 +61,24 @@ defmodule DiscordyGateway.Application.GuildFlowTest do
   end
 
   describe "GUILD_CREATE" do
+    test "hides private threads even when their parent is visible" do
+      payload =
+        guild_with_bot("private-thread")
+        |> Map.update!("channels", fn channels ->
+          [%{"id" => "21", "type" => 12, "parent_id" => "10", "owner_id" => "2"} | channels]
+        end)
+
+      Fakes.put({:guild, "private-thread"}, {:ok, payload})
+      for user <- ~w(1 2 3), do: Fakes.put({:ready, user}, ready_for(user, [payload]))
+
+      assert %{"channels" => outsider_channels} = await(online("3"), "GUILD_CREATE")
+      refute Enum.any?(outsider_channels, &(&1["id"] == "21"))
+      assert %{"channels" => creator_channels} = await(online("2"), "GUILD_CREATE")
+      assert Enum.any?(creator_channels, &(&1["id"] == "21"))
+      assert %{"channels" => owner_channels} = await(online("1"), "GUILD_CREATE")
+      assert Enum.any?(owner_channels, &(&1["id"] == "21"))
+    end
+
     test "hides channels the member cannot view" do
       setup_guild("g1")
       outsider = online("3")

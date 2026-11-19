@@ -122,7 +122,7 @@ defmodule DiscordyGateway.Domain.GuildState do
   def channel_permissions(state, user_id, channel_id, now_ms) do
     with {:ok, member} <- Map.fetch(state.members, user_id),
          {:ok, channel} <- Map.fetch(state.channels, channel_id) do
-      Permissions.compute_channel(%{
+      permissions = Permissions.compute_channel(%{
         owner_id: state.owner_id,
         guild_id: state.id,
         role_permissions: state.role_permissions,
@@ -131,6 +131,13 @@ defmodule DiscordyGateway.Domain.GuildState do
         channel_type: channel["type"] || 0,
         timed_out: timed_out?(member, now_ms)
       })
+
+      if channel["type"] == 12 and channel["owner_id"] != user_id and
+           not Permissions.has?(permissions, :manage_threads) do
+        0
+      else
+        permissions
+      end
     else
       :error -> 0
     end
