@@ -43,6 +43,12 @@ defmodule DiscordyGateway.Domain.IntentsTest do
       assert Intents.required_for("GUILD_MEMBER_ADD", :guild) == 1 <<< 1
       assert Intents.required_for("GUILD_BAN_ADD", :guild) == 1 <<< 2
       assert Intents.required_for("GUILD_EMOJIS_UPDATE", :guild) == 1 <<< 3
+
+      for event <- ~w(SOUNDBOARD_SOUND_CREATE SOUNDBOARD_SOUND_UPDATE SOUNDBOARD_SOUND_DELETE) do
+        assert Intents.required_for(event, :guild) == 1 <<< 3
+        refute Intents.allows?(0, event, :guild)
+      end
+
       assert Intents.required_for("INVITE_CREATE", :guild) == 1 <<< 6
       assert Intents.required_for("VOICE_STATE_UPDATE", :guild) == 1 <<< 7
       assert Intents.required_for("PRESENCE_UPDATE", :guild) == 1 <<< 8

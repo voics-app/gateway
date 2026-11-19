@@ -15,7 +15,8 @@ defmodule DiscordyGateway.Domain.Intents do
                THREAD_CREATE THREAD_UPDATE THREAD_DELETE),
     guild_members: ~w(GUILD_MEMBER_ADD GUILD_MEMBER_UPDATE GUILD_MEMBER_REMOVE),
     guild_moderation: ~w(GUILD_BAN_ADD GUILD_BAN_REMOVE AUDIT_LOG_ENTRY_CREATE),
-    guild_emojis: ~w(GUILD_EMOJIS_UPDATE),
+    guild_emojis:
+      ~w(GUILD_EMOJIS_UPDATE SOUNDBOARD_SOUND_CREATE SOUNDBOARD_SOUND_UPDATE SOUNDBOARD_SOUND_DELETE),
     guild_invites: ~w(INVITE_CREATE INVITE_DELETE),
     guild_voice_states: ~w(VOICE_STATE_UPDATE),
     guild_presences: ~w(PRESENCE_UPDATE),
