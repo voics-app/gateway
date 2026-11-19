@@ -91,6 +91,7 @@ defmodule DiscordyGateway.Domain.FanoutTest do
 
   test "stage events require channel visibility and the GUILDS intent", %{state: state} do
     subs = [sub(:owner, "1"), sub(:hidden, "3"), sub(:no_intent, "2", bot: true, intents: 0)]
+
     for event <- ~w(STAGE_INSTANCE_CREATE STAGE_INSTANCE_UPDATE STAGE_INSTANCE_DELETE) do
       plan = Fanout.plan(state, subs, event, %{"channel_id" => "11"}, "11", 0)
       assert targets(plan) == [:owner]
