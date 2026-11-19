@@ -56,6 +56,8 @@ defmodule DiscordyGateway.Application.Session do
     passive_updates: %PassiveUpdates{},
     refreshing_guilds: MapSet.new(),
     activation_token: nil,
+    channel_guilds: %{},
+    private_channel_ids: MapSet.new(),
     guild_ids: MapSet.new(),
     guild_refs: %{},
     friend_ids: [],
@@ -154,9 +156,12 @@ defmodule DiscordyGateway.Application.Session do
   # session holds only its small steady-state.
   @impl true
   def handle_info({:guild_snapshot, guild_id, token, encoded}, %{status: :identified} = state) do
+    data = Jason.decode!(encoded)
+    state = remember_guild_channels(state, guild_id, data["channels"])
+
     cond do
       state.passive ->
-        {:noreply, capture_guild_snapshot(state, guild_id, Jason.decode!(encoded)), :hibernate}
+        {:noreply, capture_guild_snapshot(state, guild_id, data), :hibernate}
 
       MapSet.member?(state.refreshing_guilds, guild_id) and token != state.activation_token ->
         {:noreply, state}
@@ -508,6 +513,8 @@ defmodule DiscordyGateway.Application.Session do
       | identity: identity,
         status: :identified,
         friend_ids: Ready.friend_ids(ready),
+        private_channel_ids:
+          MapSet.new(for %{"id" => id} <- List.wrap(ready["private_channels"]), do: id),
         guild_ids: MapSet.new(Ready.guild_ids(ready))
     }
 
@@ -585,6 +592,16 @@ defmodule DiscordyGateway.Application.Session do
     end
   end
 
+  defp remember_guild_channels(state, guild_id, channels) do
+    channel_guilds =
+      Enum.reduce(List.wrap(channels), state.channel_guilds, fn
+        %{"id" => id}, acc -> Map.put(acc, id, guild_id)
+        _, acc -> acc
+      end)
+
+    %{state | channel_guilds: channel_guilds}
+  end
+
   defp capture_guild_snapshot(state, guild_id, data) do
     updates =
       Enum.reduce(List.wrap(data["channels"]), state.passive_updates, fn channel, acc ->
@@ -606,6 +623,13 @@ defmodule DiscordyGateway.Application.Session do
   end
 
   defp capture_guild_event(state, guild_id, event, encoded, gate) do
+    state =
+      if event in ~w(CHANNEL_CREATE CHANNEL_UPDATE THREAD_CREATE THREAD_UPDATE) do
+        remember_guild_channels(state, guild_id, [Jason.decode!(encoded)])
+      else
+        state
+      end
+
     updates =
       case event do
         "MESSAGE_CREATE" ->

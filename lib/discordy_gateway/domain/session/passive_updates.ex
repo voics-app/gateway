@@ -88,6 +88,25 @@ defmodule DiscordyGateway.Domain.Session.PassiveUpdates do
     %{state | channels: channels, voice_states: voice}
   end
 
+  @doc "Restricts read-state updates to known private channels or currently visible guild channels."
+  @spec filter_read_states(t(), map(), MapSet.t(), (String.t(), [String.t()] -> [String.t()])) ::
+          t()
+  def filter_read_states(state, guilds, private_channels, visible) do
+    grouped =
+      state.read_states
+      |> Map.keys()
+      |> Enum.filter(&Map.has_key?(guilds, &1))
+      |> Enum.group_by(&Map.fetch!(guilds, &1))
+
+    allowed =
+      grouped
+      |> Enum.flat_map(fn {guild, channels} -> visible.(guild, channels) end)
+      |> MapSet.new()
+      |> MapSet.union(private_channels)
+
+    %{state | read_states: Map.filter(state.read_states, fn {id, _} -> id in allowed end)}
+  end
+
   @doc "Produces a compact payload; an empty map means no changes."
   @spec payload(t()) :: map()
   def payload(state) do
