@@ -17,16 +17,19 @@ defmodule DiscordyGateway.Application.Voice.ActivityReporter do
   def submit(checkpoint), do: GenServer.cast(__MODULE__, {:submit, checkpoint})
 
   @impl true
-  def init(_opts), do: {:ok, %{queue: :queue.new(), busy: false}}
+  def init(_opts), do: {:ok, %{queue: :queue.new(), busy: false, overflow_logged: false}}
 
   @impl true
   def handle_cast({:submit, checkpoint}, state) do
     if :queue.len(state.queue) >= @limit do
-      Logger.warning("voice activity checkpoint queue full; coverage is incomplete")
-      {:noreply, state}
+      unless state.overflow_logged do
+        Logger.warning("voice activity checkpoint queue full; coverage is incomplete")
+      end
+
+      {:noreply, %{state | overflow_logged: true}}
     else
       send(self(), :flush)
-      {:noreply, %{state | queue: :queue.in(checkpoint, state.queue)}}
+      {:noreply, %{state | queue: :queue.in(checkpoint, state.queue), overflow_logged: false}}
     end
   end
 
@@ -41,20 +44,28 @@ defmodule DiscordyGateway.Application.Voice.ActivityReporter do
       {:value, checkpoint} ->
         owner = self()
 
-        Task.start(fn ->
-          result =
-            try do
-              Ports.api_client().voice_activity_checkpoint(checkpoint)
-            rescue
-              _ -> {:error, :exception}
-            catch
-              :exit, _ -> {:error, :exit}
-            end
+        task =
+          Task.start(fn ->
+            result =
+              try do
+                Ports.api_client().voice_activity_checkpoint(checkpoint)
+              rescue
+                _ -> {:error, :exception}
+              catch
+                :exit, _ -> {:error, :exit}
+              end
 
-          send(owner, {:delivered, result})
-        end)
+            send(owner, {:delivered, result})
+          end)
 
-        {:noreply, %{state | busy: true}}
+        case task do
+          {:ok, _pid} ->
+            {:noreply, %{state | busy: true}}
+
+          {:error, _reason} ->
+            Process.send_after(self(), :flush, @retry_ms)
+            {:noreply, state}
+        end
     end
   end
 
