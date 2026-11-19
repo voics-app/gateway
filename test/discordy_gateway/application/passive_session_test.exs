@@ -27,6 +27,8 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     assert await(passive, "READY")
     assert await(active, "GUILD_CREATE")
     assert await(passive, "GUILD_CREATE", 100) == :none
+    send_frame(passive.session, 8, %{"guild_id" => "100", "query" => "", "limit" => 0})
+    assert await(passive, "GUILD_MEMBERS_CHUNK", 100) == :none
 
     active_bytes =
       Enum.reduce(1..10, 0, fn n, bytes ->
