@@ -8,6 +8,7 @@ defmodule DiscordyGateway.Domain.Voice.VoiceNode do
     :ws_url,
     :public_ip,
     :version,
+    :control_endpoint,
     udp_port: 50_000,
     users: 0,
     cpu_pct: 0.0,
@@ -33,6 +34,7 @@ defmodule DiscordyGateway.Domain.Voice.VoiceNode do
        ws_url: ws_url,
        public_ip: raw["public_ip"],
        version: raw["version"],
+       control_endpoint: control_endpoint(raw),
        udp_port: number(raw["udp_port"], 50_000),
        users: number(raw["users"], 0),
        cpu_pct: number(raw["cpu_pct"], 0.0),
@@ -43,6 +45,25 @@ defmodule DiscordyGateway.Domain.Voice.VoiceNode do
   end
 
   def parse(_raw), do: {:error, :invalid_node}
+
+  # A control address is optional and cannot be derived from the public websocket URL.
+  # The etcd registration is trusted, but reject public addresses and incomplete lease identities.
+  defp control_endpoint(%{"control_ip" => ip, "control_port" => port, "registration_lease" => lease})
+       when is_binary(ip) and is_integer(port) and port in 1..65_535 and is_binary(lease) do
+    with {number, ""} when number > 0 <- Integer.parse(lease),
+         {:ok, address} <- :inet.parse_address(String.to_charlist(ip)),
+         true <- private_ipv4?(address) do
+      %{ip: ip, port: port, lease: lease}
+    else
+      _ -> nil
+    end
+  end
+
+  defp control_endpoint(_raw), do: nil
+  defp private_ipv4?({10, _, _, _}), do: true
+  defp private_ipv4?({172, b, _, _}) when b in 16..31, do: true
+  defp private_ipv4?({192, 168, _, _}), do: true
+  defp private_ipv4?(_), do: false
 
   @doc "Rejects ambiguous node identities and endpoints; signaling and media require affinity."
   @spec unique_routes([t()]) :: [t()]
