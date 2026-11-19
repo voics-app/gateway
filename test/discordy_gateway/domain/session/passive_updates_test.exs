@@ -1,4 +1,4 @@
-﻿defmodule DiscordyGateway.Domain.Session.PassiveUpdatesTest do
+defmodule DiscordyGateway.Domain.Session.PassiveUpdatesTest do
   use ExUnit.Case, async: true
 
   alias DiscordyGateway.Domain.Session.PassiveUpdates

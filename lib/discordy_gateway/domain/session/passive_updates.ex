@@ -1,4 +1,4 @@
-﻿defmodule DiscordyGateway.Domain.Session.PassiveUpdates do
+defmodule DiscordyGateway.Domain.Session.PassiveUpdates do
   @moduledoc "Coalesces changes for one passive session before permission revalidation."
 
   defstruct channels: %{}, read_states: %{}, voice_states: %{}
