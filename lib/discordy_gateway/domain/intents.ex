@@ -22,7 +22,10 @@ defmodule DiscordyGateway.Domain.Intents do
     guild_messages: ~w(MESSAGE_CREATE MESSAGE_UPDATE MESSAGE_DELETE MESSAGE_DELETE_BULK),
     guild_message_reactions:
       ~w(MESSAGE_REACTION_ADD MESSAGE_REACTION_REMOVE MESSAGE_REACTION_REMOVE_ALL),
-    guild_message_typing: ~w(TYPING_START)
+    guild_message_typing: ~w(TYPING_START),
+    guild_scheduled_events:
+      ~w(GUILD_SCHEDULED_EVENT_CREATE GUILD_SCHEDULED_EVENT_UPDATE GUILD_SCHEDULED_EVENT_DELETE
+         GUILD_SCHEDULED_EVENT_USER_ADD GUILD_SCHEDULED_EVENT_USER_REMOVE)
   }
 
   @direct_events %{
