@@ -64,19 +64,19 @@ defmodule DiscordyGateway.Application.GuildFlowTest do
     test "hides private threads even when their parent is visible" do
       payload =
         guild_with_bot("private-thread")
-        |> Map.update!("channels", fn channels ->
-          [%{"id" => "21", "type" => 12, "parent_id" => "10", "owner_id" => "2"} | channels]
-        end)
+        |> Map.put("threads", [
+          %{"id" => "21", "type" => 12, "parent_id" => "10", "owner_id" => "2"}
+        ])
 
       Fakes.put({:guild, "private-thread"}, {:ok, payload})
       for user <- ~w(1 2 3), do: Fakes.put({:ready, user}, ready_for(user, [payload]))
 
-      assert %{"channels" => outsider_channels} = await(online("3"), "GUILD_CREATE")
-      refute Enum.any?(outsider_channels, &(&1["id"] == "21"))
-      assert %{"channels" => creator_channels} = await(online("2"), "GUILD_CREATE")
-      assert Enum.any?(creator_channels, &(&1["id"] == "21"))
-      assert %{"channels" => owner_channels} = await(online("1"), "GUILD_CREATE")
-      assert Enum.any?(owner_channels, &(&1["id"] == "21"))
+      assert %{"threads" => outsider_threads} = await(online("3"), "GUILD_CREATE")
+      refute Enum.any?(outsider_threads, &(&1["id"] == "21"))
+      assert %{"threads" => creator_threads} = await(online("2"), "GUILD_CREATE")
+      assert Enum.any?(creator_threads, &(&1["id"] == "21"))
+      assert %{"threads" => owner_threads} = await(online("1"), "GUILD_CREATE")
+      assert Enum.any?(owner_threads, &(&1["id"] == "21"))
     end
 
     test "hides channels the member cannot view" do
@@ -86,9 +86,9 @@ defmodule DiscordyGateway.Application.GuildFlowTest do
       assert Enum.sort(Enum.map(channels, & &1["id"])) == ["10", "12"]
 
       staff = online("2")
-      assert %{"channels" => channels} = await(staff, "GUILD_CREATE")
+      assert %{"channels" => channels, "threads" => threads} = await(staff, "GUILD_CREATE")
       assert "11" in Enum.map(channels, & &1["id"])
-      assert "13" in Enum.map(channels, & &1["id"])
+      assert "13" in Enum.map(threads, & &1["id"])
     end
 
     test "is loaded lazily from the api when READY carries only the guild id" do

@@ -236,6 +236,7 @@ defmodule DiscordyGateway.Application.Guild do
       "channels",
       Enum.filter(snapshot["channels"], &(&1["id"] in visible))
     )
+    |> Map.put("threads", Enum.filter(snapshot["threads"], &(&1["id"] in visible)))
     |> Map.put("members", Enum.take(members, @create_member_cap))
     |> Map.put("large", length(members) > @create_member_cap)
     |> Map.put("voice_states", voice_state_payloads(state, visible))

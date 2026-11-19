@@ -234,7 +234,8 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
     assert snap["id"] == "100"
     assert snap["name"] == "Guild"
     assert length(snap["roles"]) == 2
-    assert length(snap["channels"]) == 4
+    assert length(snap["channels"]) == 3
+    assert length(snap["threads"]) == 1
     assert length(snap["members"]) == 3
     assert snap["voice_region"] == "eu-west"
   end
