@@ -44,6 +44,34 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
       end)
 
     assert await(passive, "MESSAGE_CREATE", 100) == :none
+    Fakes.put(:voice_nodes, [voice_node("voice-node", region: "us-east")])
+
+    send_frame(active.session, 4, %{
+      "guild_id" => "100",
+      "channel_id" => "12",
+      "self_mute" => false,
+      "self_deaf" => false
+    })
+
+    assert %{"channel_id" => "12"} = await(active, "VOICE_STATE_UPDATE")
+
+    read = %{
+      "channel_id" => "10",
+      "last_message_id" => "1000",
+      "mention_count" => 1,
+      "read_state_version" => "1"
+    }
+
+    Ingest.handle(
+      :message,
+      Jason.encode!(%{
+        "id" => "read-positive",
+        "type" => "READ_STATE_UPDATE",
+        "target_user_ids" => ["2"],
+        "data" => read
+      })
+    )
+
     token = :sys.get_state(passive.session).passive_token
     send(passive.session, {:passive_flush, token})
     assert delta = receive_frame("passive", "PASSIVE_UPDATE_V2")
@@ -52,6 +80,8 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
              %{"guild_id" => "100", "channel_id" => "10", "last_message_id" => "1010"}
            ]
 
+    assert delta["d"]["read_states"] == [read]
+    assert [%{"user_id" => "2", "channel_id" => "12"}] = delta["d"]["voice_states"]
     passive_bytes = byte_size(Jason.encode!(delta))
 
     IO.puts(
@@ -224,6 +254,45 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     }
 
     Ingest.handle(:guild, Jason.encode!(envelope))
+  end
+
+  test "a private thread with missing parent is hidden even from its owner" do
+    thread = %{
+      "id" => "21",
+      "type" => 12,
+      "parent_id" => "999",
+      "owner_id" => "3",
+      "last_message_id" => "1025"
+    }
+
+    guild =
+      Fixtures.guild_payload("100")
+      |> Map.put("threads", [thread])
+      |> Map.put("thread_members", %{"21" => %{"version" => 1, "user_ids" => ["3"]}})
+
+    ready = %{
+      "user" => %{"id" => "3"},
+      "guilds" => [guild],
+      "private_channels" => [],
+      "relationships" => [],
+      "user_settings" => %{}
+    }
+
+    Fakes.put({:guild, "100"}, {:ok, guild})
+    Fakes.put({:ready, "3"}, {:ok, ready})
+    Fakes.put({:read_states, "3"}, {:ok, %{entries: [], versioned: true}})
+    client = client("missing-parent")
+    identify(client.session, "3", %{"passive" => true})
+    assert await(client, "READY")
+    :sys.get_state(client.session)
+    {:ok, guild_pid} = Ports.server_directory().lookup({:guild, "100"})
+    :sys.get_state(guild_pid)
+    token = :sys.get_state(client.session).passive_token
+    send(client.session, {:passive_flush, token})
+    assert await(client, "PASSIVE_UPDATE_V2", 100) == :none
+    send_frame(client.session, 27, %{"passive" => false})
+    assert %{"threads" => threads} = await(client, "GUILD_CREATE")
+    refute Enum.any?(threads, &(&1["id"] == "21"))
   end
 
   test "passive sessions require certified reads and cannot replay after reconnect" do
