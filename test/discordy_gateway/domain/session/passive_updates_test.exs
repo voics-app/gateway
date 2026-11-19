@@ -48,4 +48,19 @@ defmodule DiscordyGateway.Domain.Session.PassiveUpdatesTest do
              "voice_states" => [voice |> Map.put("channel_id", nil) |> Map.delete("member")]
            }
   end
+
+  test "suppresses duplicate or older values across intervals" do
+    delivered =
+      %PassiveUpdates{} |> PassiveUpdates.message("1", %{"channel_id" => "2", "id" => "5"})
+
+    duplicate =
+      %PassiveUpdates{} |> PassiveUpdates.message("1", %{"channel_id" => "2", "id" => "5"})
+
+    assert PassiveUpdates.payload(PassiveUpdates.changed(duplicate, delivered)) == %{}
+    newer = %PassiveUpdates{} |> PassiveUpdates.message("1", %{"channel_id" => "2", "id" => "6"})
+
+    assert PassiveUpdates.payload(PassiveUpdates.changed(newer, delivered))["channels"] == [
+             %{"guild_id" => "1", "channel_id" => "2", "last_message_id" => "6"}
+           ]
+  end
 end

@@ -1,7 +1,8 @@
 defmodule DiscordyGateway.Interface.SocketTest do
   use DiscordyGateway.Case, async: false
 
-  alias DiscordyGateway.Application.Admission
+  alias DiscordyGateway.Application.{Admission, Events.Ingest, Ports}
+  alias DiscordyGateway.Fixtures
   alias DiscordyGateway.Fakes.MemoryProbe
   alias DiscordyGateway.Interface.Router
 
@@ -52,7 +53,7 @@ defmodule DiscordyGateway.Interface.SocketTest do
   end
 
   test "a passive WebSocket receives a delta and a fresh snapshot on activation", %{conn: conn} do
-    guild = DiscordyGateway.Fixtures.guild_payload("100")
+    guild = Fixtures.guild_payload("100")
     Fakes.put({:guild, "100"}, {:ok, guild})
 
     Fakes.put(
@@ -82,12 +83,12 @@ defmodule DiscordyGateway.Interface.SocketTest do
     )
 
     assert {:text, %{"t" => "READY", "d" => %{"session_id" => id}}} = recv(conn)
-    session = DiscordyGateway.Application.Ports.session_directory().whereis(id)
+    session = Ports.session_directory().whereis(id)
 
     :sys.get_state(session)
 
     {:ok, guild_pid} =
-      DiscordyGateway.Application.Ports.server_directory().lookup({:guild, "100"})
+      Ports.server_directory().lookup({:guild, "100"})
 
     :sys.get_state(guild_pid)
     :sys.get_state(session)
@@ -100,7 +101,7 @@ defmodule DiscordyGateway.Interface.SocketTest do
       "data" => %{"id" => "1050", "channel_id" => "10", "content" => "private body"}
     }
 
-    DiscordyGateway.Application.Events.Ingest.handle(:message, Jason.encode!(event))
+    Ingest.handle(:message, Jason.encode!(event))
     :sys.get_state(guild_pid)
     token = :sys.get_state(session).passive_token
     send(session, {:passive_flush, token})

@@ -107,6 +107,45 @@ defmodule DiscordyGateway.Domain.Session.PassiveUpdates do
     %{state | read_states: Map.filter(state.read_states, fn {id, _} -> id in allowed end)}
   end
 
+  @doc "Removes values already delivered or superseded in previous intervals."
+  @spec changed(t(), t()) :: t()
+  def changed(state, delivered) do
+    channels =
+      Map.filter(state.channels, fn {key, value} ->
+        newer_value?(value["last_message_id"], delivered.channels[key], "last_message_id")
+      end)
+
+    reads =
+      Map.filter(state.read_states, fn {key, value} ->
+        newer_value?(
+          value["read_state_version"],
+          delivered.read_states[key],
+          "read_state_version"
+        )
+      end)
+
+    voice =
+      Map.filter(state.voice_states, fn {key, value} -> delivered.voice_states[key] != value end)
+
+    %{state | channels: channels, read_states: reads, voice_states: voice}
+  end
+
+  @doc "Remembers the values sent in a delta."
+  @spec merge(t(), t()) :: t()
+  def merge(delivered, changes) do
+    %{
+      delivered
+      | channels: Map.merge(delivered.channels, changes.channels),
+        read_states: Map.merge(delivered.read_states, changes.read_states),
+        voice_states: Map.merge(delivered.voice_states, changes.voice_states)
+    }
+  end
+
+  defp newer_value?(_candidate, nil, _field), do: true
+
+  defp newer_value?(candidate, previous, field),
+    do: snowflake_greater?(candidate, previous[field])
+
   @doc "Produces a compact payload; an empty map means no changes."
   @spec payload(t()) :: map()
   def payload(state) do

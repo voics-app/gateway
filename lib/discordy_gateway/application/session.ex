@@ -55,6 +55,7 @@ defmodule DiscordyGateway.Application.Session do
     passive_used: false,
     passive_token: nil,
     passive_updates: %PassiveUpdates{},
+    passive_sent: %PassiveUpdates{},
     refreshing_guilds: MapSet.new(),
     activation_token: nil,
     channel_guilds: %{},
@@ -354,14 +355,20 @@ defmodule DiscordyGateway.Application.Session do
         visible
       )
 
-    payload = PassiveUpdates.payload(updates)
+    changes = PassiveUpdates.changed(updates, state.passive_sent)
+    payload = PassiveUpdates.payload(changes)
 
     state =
       if map_size(payload) == 0,
         do: state,
         else: dispatch(state, "PASSIVE_UPDATE_V2", Dispatch.encode(payload))
 
-    {:ok, %{state | passive_updates: %PassiveUpdates{}}}
+    {:ok,
+     %{
+       state
+       | passive_updates: %PassiveUpdates{},
+         passive_sent: PassiveUpdates.merge(state.passive_sent, changes)
+     }}
   catch
     :permission_unavailable -> :error
   end
@@ -616,6 +623,7 @@ defmodule DiscordyGateway.Application.Session do
        state
        | passive: true,
          passive_used: true,
+         passive_sent: %PassiveUpdates{},
          refreshing_guilds: MapSet.new()
      })}
   end

@@ -1,7 +1,7 @@
 defmodule DiscordyGateway.Application.PassiveSessionTest do
   use DiscordyGateway.Case, async: false
 
-  alias DiscordyGateway.Application.Events.Ingest
+  alias DiscordyGateway.Application.{Events.Ingest, Ports}
   alias DiscordyGateway.Fixtures
 
   test "passive batches changed markers, then activation sends a fresh guild snapshot" do
@@ -85,7 +85,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     :sys.get_state(passive.session)
 
     {:ok, guild_pid} =
-      DiscordyGateway.Application.Ports.server_directory().lookup({:guild, "100"})
+      Ports.server_directory().lookup({:guild, "100"})
 
     :sys.get_state(guild_pid)
     :sys.get_state(passive.session)
