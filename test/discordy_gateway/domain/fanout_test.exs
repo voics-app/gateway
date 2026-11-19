@@ -104,6 +104,19 @@ defmodule DiscordyGateway.Domain.FanoutTest do
     assert targets(plan) == [:bot_msgs]
   end
 
+  test "poll vote fanout requires the poll intent and channel visibility", %{state: state} do
+    subs = [
+      sub(:visible, "2", bot: true, intents: 1 <<< 24),
+      sub(:hidden, "3", bot: true, intents: 1 <<< 24),
+      sub(:no_intent, "1", bot: true, intents: 1 <<< 9)
+    ]
+
+    for event <- ~w(MESSAGE_POLL_VOTE_ADD MESSAGE_POLL_VOTE_REMOVE) do
+      plan = Fanout.plan(state, subs, event, %{"channel_id" => "11"}, "11", 0)
+      assert plan == [{:visible, :full}]
+    end
+  end
+
   test "bots without MESSAGE_CONTENT receive a stripped variant", %{state: state} do
     subs = [
       sub(:plain, "3", bot: true, intents: 1 <<< 9),
