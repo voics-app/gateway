@@ -2,8 +2,8 @@ defmodule DiscordyGateway.Interface.SocketTest do
   use DiscordyGateway.Case, async: false
 
   alias DiscordyGateway.Application.{Admission, Events.Ingest, Ports}
-  alias DiscordyGateway.Fixtures
   alias DiscordyGateway.Fakes.MemoryProbe
+  alias DiscordyGateway.Fixtures
   alias DiscordyGateway.Interface.{Router, Socket}
 
   setup do
