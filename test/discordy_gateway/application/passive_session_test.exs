@@ -295,6 +295,39 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     refute Enum.any?(threads, &(&1["id"] == "21"))
   end
 
+  test "guild removal is sent exactly once to a passive session" do
+    guild = Fixtures.guild_payload("100")
+
+    ready = %{
+      "user" => %{"id" => "3"},
+      "guilds" => [guild],
+      "private_channels" => [],
+      "relationships" => [],
+      "user_settings" => %{}
+    }
+
+    Fakes.put({:guild, "100"}, {:ok, guild})
+    Fakes.put({:ready, "3"}, {:ok, ready})
+    Fakes.put({:read_states, "3"}, {:ok, %{entries: [], versioned: true}})
+    client = client("removed")
+    identify(client.session, "3", %{"passive" => true})
+    assert await(client, "READY")
+    :sys.get_state(client.session)
+    {:ok, guild_pid} = Ports.server_directory().lookup({:guild, "100"})
+    :sys.get_state(guild_pid)
+
+    event = %{
+      "id" => "remove-guild-member",
+      "type" => "GUILD_MEMBER_REMOVE",
+      "guild_id" => "100",
+      "data" => %{"guild_id" => "100", "user" => %{"id" => "3"}}
+    }
+
+    Ingest.handle(:guild, Jason.encode!(event))
+    assert %{"id" => "100"} = await(client, "GUILD_DELETE")
+    assert await(client, "GUILD_DELETE", 100) == :none
+  end
+
   test "passive sessions require certified reads and cannot replay after reconnect" do
     {legacy, _} = connect()
     identify(legacy, "1", %{"passive" => true})

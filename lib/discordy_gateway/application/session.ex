@@ -201,6 +201,12 @@ defmodule DiscordyGateway.Application.Session do
   end
 
   def handle_info(
+        {:dispatch, "GUILD_DELETE", _encoded},
+        %{status: :identified, passive: true} = state
+      ),
+      do: {:noreply, state}
+
+  def handle_info(
         {:dispatch, "GUILD_MEMBERS_CHUNK", _encoded},
         %{status: :identified, passive: true} = state
       ),
