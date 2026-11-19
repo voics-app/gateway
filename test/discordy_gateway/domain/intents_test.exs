@@ -5,7 +5,7 @@ defmodule DiscordyGateway.Domain.IntentsTest do
   alias DiscordyGateway.Domain.Intents
 
   test "all/0 covers the defined Discord intent bits" do
-    assert Intents.all() == (1 <<< 17) - 1 ||| 1 <<< 24 ||| 1 <<< 25
+    assert Intents.all() == ((1 <<< 17) - 1 ||| 1 <<< 24 ||| 1 <<< 25)
   end
 
   describe "validate/1" do
@@ -102,3 +102,4 @@ defmodule DiscordyGateway.Domain.IntentsTest do
     refute Intents.has?(0, :message_content)
   end
 end
+
