@@ -2,6 +2,7 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
   use DiscordyGateway.Case, async: false
 
   alias DiscordyGateway.Application.Events.Ingest
+  alias DiscordyGateway.Application.Guild
   alias DiscordyGateway.Application.Ports
   alias DiscordyGateway.Application.Voice.{Allocator, DrainNode, NodeMonitor}
   alias DiscordyGateway.Fixtures
@@ -88,6 +89,9 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
     join(alice, "v1", "12")
 
     assert %{"channel_id" => "12", "user_id" => "2"} = await(alice, "VOICE_STATE_UPDATE")
+    assert {:ok, true} = Guild.user_in_voice?("v1", "12", "2")
+    assert {:ok, false} = Guild.user_in_voice?("v1", "13", "2")
+    assert {:ok, false} = Guild.user_in_voice?("v1", "12", "3")
     assert %{"user_id" => "2"} = await(bob, "VOICE_STATE_UPDATE")
 
     assert %{
