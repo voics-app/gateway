@@ -40,6 +40,9 @@ defmodule DiscordyGateway.Domain.IntentsTest do
     test "guild events map to guild intents" do
       assert Intents.required_for("GUILD_CREATE", :guild) == 1 <<< 0
       assert Intents.required_for("CHANNEL_UPDATE", :guild) == 1 <<< 0
+      assert Intents.required_for("STAGE_INSTANCE_CREATE", :guild) == 1 <<< 0
+      assert Intents.required_for("STAGE_INSTANCE_UPDATE", :guild) == 1 <<< 0
+      assert Intents.required_for("STAGE_INSTANCE_DELETE", :guild) == 1 <<< 0
       assert Intents.required_for("GUILD_MEMBER_ADD", :guild) == 1 <<< 1
       assert Intents.required_for("GUILD_BAN_ADD", :guild) == 1 <<< 2
       assert Intents.required_for("GUILD_EMOJIS_UPDATE", :guild) == 1 <<< 3
