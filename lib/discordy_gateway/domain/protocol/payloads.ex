@@ -23,16 +23,22 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          {:ok, device_id} <- optional_string(d, "device_id"),
          {:ok, intents} <- intents(d),
          {:ok, properties} <- properties(d),
-         {:ok, presence} <- optional_presence(d) do
+         {:ok, presence} <- optional_presence(d),
+         {:ok, passive} <- boolean(d, "passive", false) do
       {:ok,
        %{
          token: token,
          device_id: device_id,
          intents: intents,
          properties: properties,
-         presence: presence
+         presence: presence,
+         passive: passive
        }}
     end
+  end
+
+  defp decode_map(:session_mode, d) do
+    with {:ok, passive} <- boolean(d, "passive", :required), do: {:ok, %{passive: passive}}
   end
 
   defp decode_map(:presence_update, d), do: presence(d)

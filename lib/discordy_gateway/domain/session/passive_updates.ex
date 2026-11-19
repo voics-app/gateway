@@ -1,9 +1,14 @@
 defmodule DiscordyGateway.Domain.Session.PassiveUpdates do
   @moduledoc "Coalesces changes for one passive session before permission revalidation."
 
-  defstruct channels: %{}, read_states: %{}, voice_states: %{}
+  defstruct channels: %{}, read_states: %{}, voice_states: %{}, voice_gates: %{}
 
-  @type t :: %__MODULE__{channels: map(), read_states: map(), voice_states: map()}
+  @type t :: %__MODULE__{
+          channels: map(),
+          read_states: map(),
+          voice_states: map(),
+          voice_gates: map()
+        }
 
   @doc "Records a visible guild message marker, retaining the greatest message ID."
   @spec message(t(), String.t(), map()) :: t()
@@ -38,14 +43,50 @@ defmodule DiscordyGateway.Domain.Session.PassiveUpdates do
   def read_state(state, _payload), do: state
 
   @doc "Keeps the latest voice state for each guild, user and voice session."
-  @spec voice_state(t(), map()) :: t()
-  def voice_state(state, %{"guild_id" => guild, "user_id" => user, "session_id" => session} = payload)
+  @spec voice_state(t(), map(), String.t() | nil) :: t()
+  def voice_state(
+        state,
+        %{"guild_id" => guild, "user_id" => user, "session_id" => session} = payload,
+        gate
+      )
       when is_binary(guild) and is_binary(user) and is_binary(session) do
     key = {guild, user, session}
-    %{state | voice_states: Map.put(state.voice_states, key, Map.delete(payload, "member"))}
+
+    %{
+      state
+      | voice_states: Map.put(state.voice_states, key, Map.delete(payload, "member")),
+        voice_gates: Map.put(state.voice_gates, key, gate || payload["channel_id"])
+    }
   end
 
-  def voice_state(state, _payload), do: state
+  def voice_state(state, _payload, _gate), do: state
+
+  @doc "Rechecks every guild-scoped channel against current permissions."
+  @spec filter_visible(t(), (String.t(), [String.t()] -> [String.t()])) :: t()
+  def filter_visible(state, visible) do
+    gates =
+      Enum.map(state.channels, fn {{guild, channel}, _} -> {guild, channel} end) ++
+        Enum.map(state.voice_gates, fn {{guild, _user, _session}, channel} -> {guild, channel} end)
+
+    allowed =
+      gates
+      |> Enum.filter(fn {_guild, channel} -> is_binary(channel) end)
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+      |> Enum.flat_map(fn {guild, channels} ->
+        Enum.map(visible.(guild, Enum.uniq(channels)), &{guild, &1})
+      end)
+      |> MapSet.new()
+
+    channels =
+      Map.filter(state.channels, fn {{guild, channel}, _} -> {guild, channel} in allowed end)
+
+    voice =
+      Map.filter(state.voice_states, fn {{guild, _, _} = key, _} ->
+        {guild, Map.get(state.voice_gates, key)} in allowed
+      end)
+
+    %{state | channels: channels, voice_states: voice}
+  end
 
   @doc "Produces a compact payload; an empty map means no changes."
   @spec payload(t()) :: map()

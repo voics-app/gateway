@@ -21,12 +21,13 @@ defmodule DiscordyGateway.Application.Session do
   alias DiscordyGateway.Domain.Events.EventEnvelope
   alias DiscordyGateway.Domain.Intents
   alias DiscordyGateway.Domain.Protocol.Codec
-  alias DiscordyGateway.Domain.Session.{Heartbeat, RateLimiter, ResumeReplay}
+  alias DiscordyGateway.Domain.Session.{Heartbeat, PassiveUpdates, RateLimiter, ResumeReplay}
   alias DiscordyGateway.Domain.Subscriber
 
   require Logger
 
   @presence_refresh_ms 30_000
+  @passive_interval_ms 5_000
   @rejoin_delay_ms 1_000
   @resume_call_timeout_ms 10_000
   # Inspecting another process makes the caller wait for it, so the socket backlog is read on every
@@ -50,6 +51,11 @@ defmodule DiscordyGateway.Application.Session do
     status: :connected,
     seq: 0,
     read_state_versioned: false,
+    passive: false,
+    passive_token: nil,
+    passive_updates: %PassiveUpdates{},
+    refreshing_guilds: MapSet.new(),
+    activation_token: nil,
     guild_ids: MapSet.new(),
     guild_refs: %{},
     friend_ids: [],
@@ -147,11 +153,58 @@ defmodule DiscordyGateway.Application.Session do
   # Hibernating right after it compacts the heap it grew while the frame was built, so an idle
   # session holds only its small steady-state.
   @impl true
-  def handle_info({:dispatch, "GUILD_CREATE", encoded}, %{status: :identified} = state),
-    do: {:noreply, dispatch(state, "GUILD_CREATE", encoded), :hibernate}
+  def handle_info({:guild_snapshot, guild_id, token, encoded}, %{status: :identified} = state) do
+    cond do
+      state.passive ->
+        {:noreply, capture_guild_snapshot(state, guild_id, Jason.decode!(encoded)), :hibernate}
+
+      MapSet.member?(state.refreshing_guilds, guild_id) and token != state.activation_token ->
+        {:noreply, state}
+
+      true ->
+        remaining = MapSet.delete(state.refreshing_guilds, guild_id)
+        token = if MapSet.size(remaining) == 0, do: nil, else: state.activation_token
+        state = %{state | refreshing_guilds: remaining, activation_token: token}
+        {:noreply, dispatch(state, "GUILD_CREATE", encoded), :hibernate}
+    end
+  end
+
+  def handle_info(
+        {:guild_dispatch, guild_id, event, encoded, gate},
+        %{status: :identified} = state
+      ) do
+    cond do
+      state.passive -> {:noreply, capture_guild_event(state, guild_id, event, encoded, gate)}
+      MapSet.member?(state.refreshing_guilds, guild_id) -> {:noreply, state}
+      true -> {:noreply, dispatch(state, event, encoded)}
+    end
+  end
+
+  def handle_info(
+        {:dispatch, "GUILD_MEMBERS_CHUNK", _encoded},
+        %{status: :identified, passive: true} = state
+      ),
+      do: {:noreply, state}
 
   def handle_info({:dispatch, event, encoded}, %{status: :identified} = state),
     do: {:noreply, dispatch(state, event, encoded)}
+
+  def handle_info({:passive_flush, token}, %{passive: true, passive_token: token} = state) do
+    updates =
+      PassiveUpdates.filter_visible(
+        state.passive_updates,
+        &Guild.visible_channels(&1, self(), &2)
+      )
+
+    payload = PassiveUpdates.payload(updates)
+
+    state =
+      if map_size(payload) == 0,
+        do: state,
+        else: dispatch(state, "PASSIVE_UPDATE_V2", Dispatch.encode(payload))
+
+    {:noreply, schedule_passive(%{state | passive_updates: %PassiveUpdates{}})}
+  end
 
   # SESSION_REVOKE is bus-only: it ends the connection of a login session the api revoked.
   def handle_info(
@@ -161,6 +214,13 @@ defmodule DiscordyGateway.Application.Session do
     if revoked?(state.identity, data),
       do: close(state, :authentication_failed),
       else: {:noreply, state}
+  end
+
+  def handle_info(
+        {:user_event, %EventEnvelope{type: "READ_STATE_UPDATE", data: data}},
+        %{status: :identified, passive: true} = state
+      ) do
+    {:noreply, %{state | passive_updates: PassiveUpdates.read_state(state.passive_updates, data)}}
   end
 
   def handle_info({:user_event, %EventEnvelope{} = envelope}, %{status: :identified} = state),
@@ -184,6 +244,11 @@ defmodule DiscordyGateway.Application.Session do
 
   def handle_info({:join_rejected, guild_id}, state),
     do: {:noreply, forget_guild(state, guild_id)}
+
+  def handle_info({:guild_gone, guild_id}, %{passive: true} = state) do
+    state = dispatch(state, "GUILD_DELETE", Dispatch.encode(%{"id" => guild_id}))
+    {:noreply, forget_guild(state, guild_id)}
+  end
 
   def handle_info({:guild_gone, guild_id}, state), do: {:noreply, forget_guild(state, guild_id)}
 
@@ -283,6 +348,8 @@ defmodule DiscordyGateway.Application.Session do
   defp command(_cmd, _payload, %{status: :connected} = state),
     do: close(state, :not_authenticated)
 
+  defp command(:session_mode, %{passive: passive}, state), do: change_session_mode(state, passive)
+
   defp command(cmd, payload, state), do: {:noreply, identified_command(cmd, payload, state)}
 
   defp identified_command(:presence_update, presence, state) do
@@ -296,6 +363,8 @@ defmodule DiscordyGateway.Application.Session do
     session = %{pid: self(), id: state.id, identity: state.identity}
     %{state | voice_scope: VoiceRouting.route(session, state.voice_scope, request)}
   end
+
+  defp identified_command(:request_guild_members, _request, %{passive: true} = state), do: state
 
   defp identified_command(:request_guild_members, request, state) do
     _ = Guild.request_members(request.guild_id, self(), request)
@@ -411,6 +480,9 @@ defmodule DiscordyGateway.Application.Session do
     :ok = Ports.session_directory().register(state.id, identity.user_id, identity.device_id)
 
     case Ports.messages_client().fetch_read_states(identity.user_id) do
+      {:ok, %{versioned: false}} when payload.passive ->
+        close(state, :unknown_error)
+
       {:ok, reads} ->
         ready =
           Map.merge(ready, %{
@@ -440,6 +512,7 @@ defmodule DiscordyGateway.Application.Session do
     }
 
     :ok = Ports.call_defaults().put(identity.user_id, Ready.e2ee_calls_default?(ready))
+    state = if payload.passive, do: schedule_passive(%{state | passive: true}), else: state
     state = dispatch(state, "READY", Dispatch.encode(Ready.payload(identity, state.id, ready)))
     state = join_guilds(state, List.wrap(ready["guilds"]))
     replay_inbox(state)
@@ -473,6 +546,79 @@ defmodule DiscordyGateway.Application.Session do
         do: send_frame(state, Codec.relay(:e2ee_envelope, payload))
 
     :ok
+  end
+
+  defp schedule_passive(state) do
+    token = make_ref()
+    Process.send_after(self(), {:passive_flush, token}, @passive_interval_ms)
+    %{state | passive_token: token}
+  end
+
+  defp change_session_mode(%{passive: passive} = state, passive), do: {:noreply, state}
+
+  defp change_session_mode(%{read_state_versioned: false} = state, true),
+    do: close(state, :unknown_error)
+
+  defp change_session_mode(state, true) do
+    {:noreply, schedule_passive(%{state | passive: true, refreshing_guilds: MapSet.new()})}
+  end
+
+  defp change_session_mode(state, false) do
+    case resume_read_states(state) do
+      {:ok, reads} ->
+        guilds = Enum.map(state.guild_ids, &%{"id" => &1})
+
+        state = %{
+          state
+          | passive: false,
+            passive_token: nil,
+            passive_updates: %PassiveUpdates{},
+            refreshing_guilds: state.guild_ids,
+            activation_token: make_ref()
+        }
+
+        state = state |> sync_read_states(reads) |> join_guilds(guilds)
+        {:noreply, state}
+
+      {:error, _} ->
+        close(state, :unknown_error)
+    end
+  end
+
+  defp capture_guild_snapshot(state, guild_id, data) do
+    updates =
+      Enum.reduce(List.wrap(data["channels"]), state.passive_updates, fn channel, acc ->
+        case channel do
+          %{"id" => channel_id, "last_message_id" => id} when is_binary(id) ->
+            PassiveUpdates.message(acc, guild_id, %{"channel_id" => channel_id, "id" => id})
+
+          _ ->
+            acc
+        end
+      end)
+
+    updates =
+      Enum.reduce(List.wrap(data["voice_states"]), updates, fn voice, acc ->
+        PassiveUpdates.voice_state(acc, voice, voice["channel_id"])
+      end)
+
+    %{state | passive_updates: updates}
+  end
+
+  defp capture_guild_event(state, guild_id, event, encoded, gate) do
+    updates =
+      case event do
+        "MESSAGE_CREATE" ->
+          PassiveUpdates.message(state.passive_updates, guild_id, Jason.decode!(encoded))
+
+        "VOICE_STATE_UPDATE" ->
+          PassiveUpdates.voice_state(state.passive_updates, Jason.decode!(encoded), gate)
+
+        _ ->
+          state.passive_updates
+      end
+
+    %{state | passive_updates: updates}
   end
 
   ## RESUME
@@ -711,6 +857,7 @@ defmodule DiscordyGateway.Application.Session do
       user_id: state.identity.user_id,
       intents: state.identity.intents,
       session_id: state.id,
+      snapshot_token: state.activation_token,
       bot: Identity.bot?(state.identity),
       application_id: state.identity.application_id
     }

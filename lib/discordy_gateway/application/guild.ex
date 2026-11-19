@@ -66,6 +66,17 @@ defmodule DiscordyGateway.Application.Guild do
   def request_members(guild_id, session_pid, request),
     do: cast(guild_id, {:request_members, session_pid, request})
 
+  @doc "Revalidates channel visibility for a passive batch at delivery time."
+  @spec visible_channels(String.t(), pid(), [String.t()]) :: [String.t()]
+  def visible_channels(guild_id, session_pid, channel_ids) do
+    case Ports.server_directory().lookup({:guild, guild_id}) do
+      {:ok, pid} -> GenServer.call(pid, {:visible_channels, session_pid, channel_ids})
+      :error -> []
+    end
+  catch
+    :exit, _ -> []
+  end
+
   defp cast(guild_id, message) do
     case Ports.server_directory().lookup({:guild, guild_id}) do
       {:ok, pid} -> GenServer.cast(pid, message)
@@ -93,6 +104,21 @@ defmodule DiscordyGateway.Application.Guild do
       {:ok, cache} -> {:noreply, schedule_idle(%{state | cache: cache, seed: nil})}
       {:error, reason} -> {:stop, {:shutdown, reason}, state}
     end
+  end
+
+  @impl true
+  def handle_call({:visible_channels, pid, channel_ids}, _from, state) do
+    visible =
+      case Map.fetch(state.subs, pid) do
+        {:ok, %{sub: sub}} ->
+          current = visible_channel_ids(state.cache, sub.user_id, System.os_time(:millisecond))
+          Enum.filter(channel_ids, &MapSet.member?(current, &1))
+
+        :error ->
+          []
+      end
+
+    {:reply, visible, state}
   end
 
   @impl true
@@ -175,7 +201,8 @@ defmodule DiscordyGateway.Application.Guild do
     if GuildState.member?(state.cache, sub.user_id) do
       state = state |> drop_monitor(sub.pid) |> cancel_idle()
       ref = Process.monitor(sub.pid)
-      Dispatch.to_sessions([sub.pid], "GUILD_CREATE", guild_create_payload(state, sub))
+      encoded = Dispatch.encode(guild_create_payload(state, sub))
+      send(sub.pid, {:guild_snapshot, state.id, sub.snapshot_token, encoded})
       %{state | subs: Map.put(state.subs, sub.pid, %{sub: sub, ref: ref})}
     else
       send(sub.pid, {:join_rejected, state.id})
@@ -339,7 +366,13 @@ defmodule DiscordyGateway.Application.Guild do
         &elem(&1, 0)
       )
       |> Enum.each(fn {{variant, quiet?}, pids} ->
-        Dispatch.to_sessions(pids, event, variant_payload(data, variant, quiet?))
+        Dispatch.to_guild_sessions(
+          pids,
+          state.id,
+          event,
+          variant_payload(data, variant, quiet?),
+          channel_id
+        )
       end)
     end)
   end
