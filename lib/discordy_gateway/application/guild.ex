@@ -429,9 +429,8 @@ defmodule DiscordyGateway.Application.Guild do
 
   defp rejected_voice_payload(state, member, request, permissions) do
     case VoiceStates.get(state.room.states, member.user_id) do
-      %{session_id: session_id, channel_id: channel_id} = current
-      when session_id == member.session_id and channel_id == request.channel_id ->
-        if GuildState.voice_channel?(state.cache, channel_id) and
+      %{session_id: session_id} = current when session_id == member.session_id ->
+        if GuildState.voice_channel?(state.cache, request.channel_id) and
              Permissions.has?(permissions, :connect) do
           VoiceStates.to_payload(current, state.id)
         else

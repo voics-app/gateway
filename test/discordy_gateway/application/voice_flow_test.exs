@@ -201,6 +201,25 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
                await_in(bob, "12")
     end
 
+    publish(
+      :guild,
+      "CHANNEL_CREATE",
+      %{"id" => "14", "type" => 2, "guild_id" => "stream-permissions"},
+      %{"guild_id" => "stream-permissions"}
+    )
+
+    assert %{"id" => "14"} = await(bob, "CHANNEL_CREATE")
+
+    send_frame(bob.session, 4, %{
+      "guild_id" => "stream-permissions",
+      "channel_id" => "14",
+      "self_mute" => false,
+      "self_deaf" => false,
+      "self_video" => true
+    })
+
+    assert %{"channel_id" => "12", "self_video" => false} = await_in(bob, "12")
+
     send_frame(owner.session, 4, %{
       "guild_id" => "stream-permissions",
       "channel_id" => "12",
