@@ -203,20 +203,10 @@ defmodule DiscordyGateway.Application.Session do
     do: {:noreply, dispatch(state, event, encoded)}
 
   def handle_info({:passive_flush, token}, %{passive: true, passive_token: token} = state) do
-    updates =
-      PassiveUpdates.filter_visible(
-        state.passive_updates,
-        &Guild.visible_channels(&1, self(), &2)
-      )
-
-    payload = PassiveUpdates.payload(updates)
-
-    state =
-      if map_size(payload) == 0,
-        do: state,
-        else: dispatch(state, "PASSIVE_UPDATE_V2", Dispatch.encode(payload))
-
-    {:noreply, schedule_passive(%{state | passive_updates: %PassiveUpdates{}})}
+    case flush_passive(state) do
+      {:ok, state} -> {:noreply, schedule_passive(state)}
+      :error -> close(state, :unknown_error)
+    end
   end
 
   # SESSION_REVOKE is bus-only: it ends the connection of a login session the api revoked.
@@ -340,6 +330,35 @@ defmodule DiscordyGateway.Application.Session do
   end
 
   def terminate(_reason, _state), do: :ok
+
+  defp flush_passive(state) do
+    visible = fn guild_id, channels ->
+      case Guild.visible_channels(guild_id, self(), channels) do
+        {:ok, ids} -> ids
+        :error -> throw(:permission_unavailable)
+      end
+    end
+
+    updates =
+      state.passive_updates
+      |> PassiveUpdates.filter_visible(visible)
+      |> PassiveUpdates.filter_read_states(
+        state.channel_guilds,
+        state.private_channel_ids,
+        visible
+      )
+
+    payload = PassiveUpdates.payload(updates)
+
+    state =
+      if map_size(payload) == 0,
+        do: state,
+        else: dispatch(state, "PASSIVE_UPDATE_V2", Dispatch.encode(payload))
+
+    {:ok, %{state | passive_updates: %PassiveUpdates{}}}
+  catch
+    :permission_unavailable -> :error
+  end
 
   ## Inbound frames
 
@@ -813,6 +832,7 @@ defmodule DiscordyGateway.Application.Session do
       |> follow_membership(type, data)
       |> follow_relationship(type, data)
       |> follow_settings(type, data)
+      |> follow_private_channel(type, data)
     else
       state
     end
@@ -823,6 +843,18 @@ defmodule DiscordyGateway.Application.Session do
        do: id in ids
 
   defp revoked?(_identity, _data), do: false
+
+  defp follow_private_channel(state, "CHANNEL_CREATE", %{"id" => id} = channel) do
+    if is_nil(channel["guild_id"]),
+      do: %{state | private_channel_ids: MapSet.put(state.private_channel_ids, id)},
+      else: state
+  end
+
+  defp follow_private_channel(state, "CHANNEL_DELETE", %{"id" => id}) do
+    %{state | private_channel_ids: MapSet.delete(state.private_channel_ids, id)}
+  end
+
+  defp follow_private_channel(state, _type, _data), do: state
 
   defp follow_settings(state, "USER_SETTINGS_UPDATE", %{"status" => status} = data)
        when status in ~w(online idle dnd invisible) and status != state.manual_status do

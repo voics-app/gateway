@@ -76,6 +76,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     passive = client("restricted")
     identify(passive.session, "3", %{"passive" => true})
     assert await(passive, "READY")
+    :sys.get_state(passive.session)
 
     {:ok, guild_pid} =
       DiscordyGateway.Application.Ports.server_directory().lookup({:guild, "100"})

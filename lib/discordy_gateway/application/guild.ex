@@ -67,14 +67,17 @@ defmodule DiscordyGateway.Application.Guild do
     do: cast(guild_id, {:request_members, session_pid, request})
 
   @doc "Revalidates channel visibility for a passive batch at delivery time."
-  @spec visible_channels(String.t(), pid(), [String.t()]) :: [String.t()]
+  @spec visible_channels(String.t(), pid(), [String.t()]) :: {:ok, [String.t()]} | :error
   def visible_channels(guild_id, session_pid, channel_ids) do
     case Ports.server_directory().lookup({:guild, guild_id}) do
-      {:ok, pid} -> GenServer.call(pid, {:visible_channels, session_pid, channel_ids})
-      :error -> []
+      {:ok, pid} ->
+        {:ok, GenServer.call(pid, {:visible_channels, session_pid, channel_ids}, 1_000)}
+
+      :error ->
+        :error
     end
   catch
-    :exit, _ -> []
+    :exit, _ -> :error
   end
 
   defp cast(guild_id, message) do
