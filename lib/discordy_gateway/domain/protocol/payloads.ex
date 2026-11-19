@@ -24,7 +24,7 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          {:ok, intents} <- intents(d),
          {:ok, properties} <- properties(d),
          {:ok, presence} <- optional_presence(d),
-         {:ok, passive} <- boolean(d, "passive", false) do
+         {:ok, passive} <- optional_passive(d) do
       {:ok,
        %{
          token: token,
@@ -179,6 +179,10 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          :ok <- max_length(user_ids, @max_ring_targets) do
       {:ok, %{channel_id: channel_id, user_ids: Enum.uniq(user_ids)}}
     end
+  end
+
+  defp optional_passive(d) do
+    if Map.has_key?(d, "passive"), do: boolean(d, "passive", :required), else: {:ok, false}
   end
 
   defp intents(d) do
