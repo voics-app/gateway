@@ -3,9 +3,9 @@ alias DiscordyGateway.Interface.Socket
 {:ok, context} = :zstd.context(:compress)
 state = %{session: self(), compression: context}
 frames = [
-  {"READY", %{"op" => 0, "t" => "READY", "s" => 1, "d" => %{"session_id" => "session-123", "user" => %{"id" => "123", "username" => "example"}, "guilds" => []}}},
-  {"MESSAGE_CREATE", %{"op" => 0, "t" => "MESSAGE_CREATE", "s" => 2, "d" => %{"id" => "987", "channel_id" => "123", "author" => %{"id" => "123", "username" => "example"}, "content" => "Hello from a gateway session"}}},
-  {"RESUMED", %{"op" => 0, "t" => "RESUMED", "s" => 3, "d" => %{}}}
+  {"READY", %{"op" => 0, "t" => "READY", "d" => %{"session_id" => "abc", "user" => %{"id" => "5"}}}},
+  {"MESSAGE_CREATE", %{"op" => 0, "t" => "MESSAGE_CREATE", "d" => %{"content" => "hello", "id" => "123"}}},
+  {"RESUMED", %{"op" => 0, "t" => "RESUMED", "d" => %{}}}
 ]
 IO.puts("Event | plain bytes | compressed bytes (same stream)")
 for {name, frame} <- frames do

@@ -54,7 +54,6 @@ defmodule DiscordyGateway.Interface.SocketTest do
   test "negotiates a continuous compressed stream on a real WebSocket", %{conn: conn} do
     assert {:ok, stream} = upgrade(conn, "v=1&encoding=json&compress=zstd-stream")
     {:ok, decoder} = :zstd.context(:decompress)
-    on_exit(fn -> :zstd.close(decoder) end)
     assert %{"op" => 10} = recv_compressed(conn, decoder)
 
     :gun.ws_send(
@@ -66,6 +65,7 @@ defmodule DiscordyGateway.Interface.SocketTest do
     assert %{"t" => "READY", "s" => 1} = recv_compressed(conn, decoder)
     :gun.ws_send(conn, stream, {:text, Jason.encode!(%{"op" => 1, "d" => 1})})
     assert %{"op" => 11} = recv_compressed(conn, decoder)
+    :zstd.close(decoder)
   end
 
   defp recv_compressed(conn, decoder) do
