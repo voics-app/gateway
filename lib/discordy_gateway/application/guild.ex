@@ -58,6 +58,22 @@ defmodule DiscordyGateway.Application.Guild do
   def voice_state_update(guild_id, session_pid, request),
     do: cast(guild_id, {:voice_state_update, session_pid, request})
 
+  @doc "Checks the owning guild process for a member's current voice channel."
+  @spec user_in_voice?(String.t(), String.t(), String.t()) :: {:ok, boolean()} | {:error, term()}
+  def user_in_voice?(guild_id, channel_id, user_id) do
+    case Ports.server_directory().lookup({:guild, guild_id}) do
+      {:ok, pid} ->
+        try do
+          {:ok, GenServer.call(pid, {:user_in_voice?, channel_id, user_id})}
+        catch
+          :exit, reason -> {:error, reason}
+        end
+
+      :error ->
+        {:ok, false}
+    end
+  end
+
   @spec watch_together(String.t(), pid(), map()) :: :ok | :not_running
   def watch_together(guild_id, session_pid, command),
     do: cast(guild_id, {:watch_together, session_pid, command})
@@ -137,6 +153,10 @@ defmodule DiscordyGateway.Application.Guild do
 
     {:noreply, state}
   end
+
+  @impl true
+  def handle_call({:user_in_voice?, channel_id, user_id}, _from, state),
+    do: {:reply, Room.user_in_channel?(state.room, user_id, channel_id), state}
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _reason}, state),
