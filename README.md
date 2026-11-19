@@ -201,3 +201,14 @@ listed, so downgrading does not help.
 ## Git hooks
 
 Tests run locally, not in CI. Install [lefthook](https://github.com/evilmartians/lefthook) once and run `make hooks` (or `lefthook install`) to enable the pre-push hook in `lefthook.yml`: it runs this repository's lint and unit tests before every push. CI repeats only the slim gate on pull requests. Skip once with `LEFTHOOK=0 git push`.
+
+### Gateway compression
+
+Connect with `v=1&encoding=json&compress=zstd-stream` to receive binary frames in one
+continuous zstd stream per WebSocket connection. Each event is flushed so it can be
+decoded immediately. Client-to-server frames remain JSON text. A reconnect starts a
+new stream, including when resuming a session. Without the parameter, server frames
+remain JSON text. Unknown compression values are rejected. OTP 29 is required.
+
+Run `mix run --no-start bench/compression.exs` to compare event bytes in a sample stream.
+This is a small illustrative payload, not a production bandwidth measurement.
