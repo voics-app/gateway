@@ -134,6 +134,98 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     assert await(passive, "PASSIVE_UPDATE_V2", 100) == :none
   end
 
+  test "private thread membership is rechecked at flush and wake" do
+    thread = %{
+      "id" => "21",
+      "type" => 12,
+      "parent_id" => "10",
+      "owner_id" => "2",
+      "last_message_id" => "1025"
+    }
+
+    guild =
+      Fixtures.guild_payload("100")
+      |> Map.put("threads", [thread])
+      |> Map.put("thread_members", %{"21" => %{"version" => 2, "user_ids" => ["2", "3"]}})
+
+    ready = %{
+      "user" => %{"id" => "3"},
+      "guilds" => [guild],
+      "private_channels" => [],
+      "relationships" => [],
+      "user_settings" => %{}
+    }
+
+    Fakes.put({:guild, "100"}, {:ok, guild})
+    Fakes.put({:ready, "3"}, {:ok, ready})
+    Fakes.put({:read_states, "3"}, {:ok, %{entries: [], versioned: true}})
+    client = client("thread-passive")
+    identify(client.session, "3", %{"passive" => true})
+    assert await(client, "READY")
+    :sys.get_state(client.session)
+    {:ok, guild_pid} = Ports.server_directory().lookup({:guild, "100"})
+    :sys.get_state(guild_pid)
+    token = :sys.get_state(client.session).passive_token
+    send(client.session, {:passive_flush, token})
+
+    assert %{"channels" => [%{"channel_id" => "21", "last_message_id" => "1025"}]} =
+             await(client, "PASSIVE_UPDATE_V2")
+
+    publish_thread_message("1026")
+    :sys.get_state(guild_pid)
+    :sys.get_state(client.session)
+    publish_membership(3, ["2"])
+    publish_membership(2, ["2", "3"])
+    :sys.get_state(guild_pid)
+    token = :sys.get_state(client.session).passive_token
+    send(client.session, {:passive_flush, token})
+    assert await(client, "PASSIVE_UPDATE_V2", 100) == :none
+    assert await(client, "THREAD_DELETE", 100) == :none
+
+    send_frame(client.session, 27, %{"passive" => false})
+    assert %{"threads" => threads} = await(client, "GUILD_CREATE")
+    refute Enum.any?(threads, &(&1["id"] == "21"))
+    publish_membership(4, ["2", "3"])
+    assert %{"id" => "21"} = await(client, "THREAD_CREATE")
+    publish_thread_message("1027")
+    assert %{"id" => "1027"} = await(client, "MESSAGE_CREATE")
+  end
+
+  defp publish_thread_message(id) do
+    data = %{"id" => id, "channel_id" => "21"}
+
+    envelope = %{
+      "id" => "thread-message-#{id}",
+      "type" => "MESSAGE_CREATE",
+      "guild_id" => "100",
+      "channel_id" => "21",
+      "data" => data
+    }
+
+    Ingest.handle(:message, Jason.encode!(envelope))
+  end
+
+  defp publish_membership(version, users) do
+    data = %{
+      "id" => "21",
+      "guild_id" => "100",
+      "added_members" => [],
+      "removed_member_ids" => [],
+      "_membership_version" => version,
+      "_member_ids" => users
+    }
+
+    envelope = %{
+      "id" => "thread-members-#{version}",
+      "type" => "THREAD_MEMBERS_UPDATE",
+      "guild_id" => "100",
+      "channel_id" => "21",
+      "data" => data
+    }
+
+    Ingest.handle(:guild, Jason.encode!(envelope))
+  end
+
   test "passive sessions require certified reads and cannot replay after reconnect" do
     {legacy, _} = connect()
     identify(legacy, "1", %{"passive" => true})

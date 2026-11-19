@@ -353,10 +353,16 @@ defmodule DiscordyGateway.Application.Guild do
 
       cond do
         not before and after_change and is_map(channel) ->
-          Dispatch.to_sessions([sub.pid], "THREAD_CREATE", channel)
+          Dispatch.to_guild_sessions([sub.pid], state.id, "THREAD_CREATE", channel, id)
 
         before and not after_change ->
-          Dispatch.to_sessions([sub.pid], "THREAD_DELETE", %{"id" => id, "guild_id" => state.id})
+          Dispatch.to_guild_sessions(
+            [sub.pid],
+            state.id,
+            "THREAD_DELETE",
+            %{"id" => id, "guild_id" => state.id},
+            id
+          )
 
         true ->
           :ok

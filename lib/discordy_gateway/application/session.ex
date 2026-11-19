@@ -166,7 +166,13 @@ defmodule DiscordyGateway.Application.Session do
   @impl true
   def handle_info({:guild_snapshot, guild_id, token, encoded}, %{status: :identified} = state) do
     data = Jason.decode!(encoded)
-    state = remember_guild_channels(state, guild_id, data["channels"])
+
+    state =
+      remember_guild_channels(
+        state,
+        guild_id,
+        List.wrap(data["channels"]) ++ List.wrap(data["threads"])
+      )
 
     cond do
       state.passive ->
@@ -666,15 +672,19 @@ defmodule DiscordyGateway.Application.Session do
 
   defp capture_guild_snapshot(state, guild_id, data) do
     updates =
-      Enum.reduce(List.wrap(data["channels"]), state.passive_updates, fn channel, acc ->
-        case channel do
-          %{"id" => channel_id, "last_message_id" => id} when is_binary(id) ->
-            PassiveUpdates.message(acc, guild_id, %{"channel_id" => channel_id, "id" => id})
+      Enum.reduce(
+        List.wrap(data["channels"]) ++ List.wrap(data["threads"]),
+        state.passive_updates,
+        fn channel, acc ->
+          case channel do
+            %{"id" => channel_id, "last_message_id" => id} when is_binary(id) ->
+              PassiveUpdates.message(acc, guild_id, %{"channel_id" => channel_id, "id" => id})
 
-          _ ->
-            acc
+            _ ->
+              acc
+          end
         end
-      end)
+      )
 
     updates =
       Enum.reduce(List.wrap(data["voice_states"]), updates, fn voice, acc ->
@@ -699,6 +709,18 @@ defmodule DiscordyGateway.Application.Session do
 
         "VOICE_STATE_UPDATE" ->
           PassiveUpdates.voice_state(state.passive_updates, Jason.decode!(encoded), gate)
+
+        "THREAD_CREATE" ->
+          case Jason.decode!(encoded) do
+            %{"id" => channel_id, "last_message_id" => id} when is_binary(id) ->
+              PassiveUpdates.message(state.passive_updates, guild_id, %{
+                "channel_id" => channel_id,
+                "id" => id
+              })
+
+            _ ->
+              state.passive_updates
+          end
 
         _ ->
           state.passive_updates
