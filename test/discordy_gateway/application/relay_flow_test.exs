@@ -47,6 +47,7 @@ defmodule DiscordyGateway.Application.RelayFlowTest do
       assert %{"reason" => "missing_permissions"} = await(sender, "E2EE_ENVELOPE_REJECTED")
       assert {:ok, []} = Ports.inbox_store().list("dev-3")
     end
+
     test "delivers each online device only its own entry and stores every entry in the inbox" do
       access("c1", "ephemeral")
       sender = online("2")
