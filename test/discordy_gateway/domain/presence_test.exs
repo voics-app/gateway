@@ -7,7 +7,18 @@ defmodule DiscordyGateway.Domain.PresenceTest do
     do: %{status: status, activities: activities, afk: false, platform: platform}
 
   test "no sessions means offline" do
-    assert Presence.aggregate([]) == %{status: "offline", activities: [], client_status: %{}}
+    assert Presence.aggregate([]) == %{
+             status: "offline",
+             activities: [],
+             client_status: %{},
+             afk: false
+           }
+  end
+
+  test "AFK requires every session, including invisible sessions, to be inactive" do
+    idle = %{s("idle", "desktop") | afk: true}
+    assert Presence.aggregate([idle]).afk
+    refute Presence.aggregate([idle, s("invisible", "mobile")]).afk
   end
 
   test "dnd beats online beats idle" do

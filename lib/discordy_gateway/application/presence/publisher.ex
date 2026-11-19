@@ -60,7 +60,7 @@ defmodule DiscordyGateway.Application.Presence.Publisher do
 
   defp broadcast(ctx, aggregate) do
     payload = Presence.dispatch_payload(ctx.user_id, aggregate, nil)
-    Enum.each(ctx.guild_ids, &Guild.presence(&1, payload))
+    Enum.each(ctx.guild_ids, &Guild.presence(&1, payload, aggregate.afk))
 
     friend_pids =
       Enum.flat_map(ctx.friend_ids, fn id -> Ports.session_directory().sessions_for_user(id) end)

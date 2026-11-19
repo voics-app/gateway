@@ -193,3 +193,16 @@ remain JSON text. Unknown compression values are rejected. OTP 29 is required.
 
 Run `mix run --no-start bench/compression.exs` to compare event bytes in a sample stream.
 This is a small illustrative payload, not a production bandwidth measurement.
+
+## Voice state permission checks
+
+For guild voice channels, a `VOICE_STATE_UPDATE` that enables `self_video` or
+`self_stream` requires the effective channel `STREAM` permission. A rejected
+update leaves an existing voice state intact and sends that state back to the
+requesting session. This check validates gateway state only: the voice service
+must independently enforce media publication permissions. Forced push-to-talk
+and priority-speaker ducking are not provided by this check.
+
+The gateway moves a caller to a configured guild AFK channel after the guild's
+timeout when every active session reports automatic AFK. Returning on any device
+cancels the timer; missing presence fails safe and does not trigger a move.
