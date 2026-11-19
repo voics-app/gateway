@@ -45,6 +45,14 @@ defmodule DiscordyGateway.Infrastructure.Http.ApiClient do
   def fetch_channel_access(channel_id, user_id),
     do: request(:get, "/internal/v1/channels/#{encode(channel_id)}/access/#{encode(user_id)}")
 
+  @impl true
+  def voice_activity_checkpoint(checkpoint) do
+    case request(:post, "/internal/v1/voice/activity-checkpoints", json: checkpoint) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp request(method, path, opts \\ []) do
     config = Application.fetch_env!(:discordy_gateway, :http)
 
@@ -60,6 +68,8 @@ defmodule DiscordyGateway.Infrastructure.Http.ApiClient do
 
     case Req.request(options) do
       {:ok, %Req.Response{status: 200, body: %{} = body}} -> {:ok, body}
+      {:ok, %Req.Response{status: 204}} -> {:ok, %{}}
+      {:ok, %Req.Response{status: 400}} -> {:error, :bad_request}
       {:ok, %Req.Response{status: 401}} -> {:error, :unauthorized}
       {:ok, %Req.Response{status: 403}} -> {:error, :forbidden}
       {:ok, %Req.Response{status: 404}} -> {:error, :not_found}

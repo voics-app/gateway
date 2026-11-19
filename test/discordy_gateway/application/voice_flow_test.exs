@@ -56,6 +56,48 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
 
   defp leave(client, gid), do: join(client, gid, nil)
 
+  test "voice transitions report a session generation and close it on leave" do
+    start_supervised!(DiscordyGateway.Application.Voice.ActivityReporter)
+    Fakes.put(:voice_checkpoint_observer, self())
+    setup_guild("vactivity")
+    Fakes.put(:voice_nodes, [voice_node("n", region: "us-east")])
+    alice = online_in("vactivity", "2")
+    join(alice, "vactivity", "12")
+    assert %{"channel_id" => "12"} = await(alice, "VOICE_STATE_UPDATE")
+
+    assert_receive {:voice_checkpoint,
+                    %{
+                      "guild_id" => "vactivity",
+                      "user_id" => "2",
+                      "connected" => true,
+                      "generation_id" => generation
+                    }},
+                   2_000
+
+    leave(alice, "vactivity")
+    assert %{"channel_id" => nil} = await(alice, "VOICE_STATE_UPDATE")
+
+    assert_receive {:voice_checkpoint,
+                    %{
+                      "guild_id" => "vactivity",
+                      "user_id" => "2",
+                      "connected" => false,
+                      "generation_id" => ^generation
+                    }},
+                   2_000
+  end
+
+  test "voice checkpoint reporter retries the same observation" do
+    start_supervised!(DiscordyGateway.Application.Voice.ActivityReporter)
+    Fakes.put(:voice_checkpoint_observer, self())
+    Fakes.put(:voice_checkpoint_result, {:error, :unavailable})
+    checkpoint = %{"guild_id" => "1", "observed_at" => "2026-11-19T00:00:00Z"}
+    DiscordyGateway.Application.Voice.ActivityReporter.submit(checkpoint)
+    assert_receive {:voice_checkpoint, ^checkpoint}, 2_000
+    Fakes.put(:voice_checkpoint_result, :ok)
+    assert_receive {:voice_checkpoint, ^checkpoint}, 4_000
+  end
+
   test "allocation excludes replicas that advertise the same socket or media endpoint" do
     Fakes.put(:voice_nodes, [
       voice_node("socket-a", ws_url: "wss://rtc.test", users: 0),
