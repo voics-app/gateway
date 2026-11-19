@@ -295,6 +295,13 @@ defmodule DiscordyGateway.Application.Guild do
     {:noreply, %{state | cache: updated}}
   end
 
+  defp handle_event(%EventEnvelope{type: type, data: data} = envelope, state) do
+    updated = GuildState.apply_event(state.cache, type, data)
+    plan_cache = if type in @remove_events, do: state.cache, else: updated
+    fanout(state, type, data, envelope.channel_id, plan_cache)
+    after_event(type, data, %{state | cache: updated})
+  end
+
   defp notify_thread_visibility_changes(state, updated, data) do
     id = data["id"]
     now = System.os_time(:millisecond)
@@ -325,13 +332,6 @@ defmodule DiscordyGateway.Application.Guild do
           :ok
       end
     end
-  end
-
-  defp handle_event(%EventEnvelope{type: type, data: data} = envelope, state) do
-    updated = GuildState.apply_event(state.cache, type, data)
-    plan_cache = if type in @remove_events, do: state.cache, else: updated
-    fanout(state, type, data, envelope.channel_id, plan_cache)
-    after_event(type, data, %{state | cache: updated})
   end
 
   defp after_event("GUILD_DELETE", _data, state) do
