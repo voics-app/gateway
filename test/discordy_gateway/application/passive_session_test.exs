@@ -50,7 +50,13 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
              %{"guild_id" => "100", "channel_id" => "10", "last_message_id" => "1010"}
            ]
 
-    assert byte_size(Jason.encode!(delta)) < active_bytes
+    passive_bytes = byte_size(Jason.encode!(delta))
+
+    IO.puts(
+      "Passive traffic comparison: active=#{active_bytes} bytes, passive=#{passive_bytes} bytes"
+    )
+
+    assert passive_bytes < active_bytes
     send_frame(passive.session, 27, %{"passive" => false})
     assert %{"channels" => channels} = await(passive, "GUILD_CREATE")
     assert Enum.find(channels, &(&1["id"] == "10"))["last_message_id"] == "1010"
