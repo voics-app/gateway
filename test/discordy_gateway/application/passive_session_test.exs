@@ -331,7 +331,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     }
 
     Ingest.handle(:guild, Jason.encode!(event))
-    assert %{"id" => gid} = await(client, "GUILD_DELETE")
+    assert %{"id" => ^gid} = await(client, "GUILD_DELETE")
     assert await(client, "GUILD_DELETE", 100) == :none
   end
 
