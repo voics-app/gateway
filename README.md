@@ -34,6 +34,25 @@ HTTP endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics`, and (with `X-Inte
 `GET /internal/v1/admin/stats`, `POST /internal/v1/voice/nodes/{id}/drain`,
 `POST /internal/v1/voice/nodes/{id}/undrain`.
 
+## Passive sessions (experimental)
+
+A certified read-state user can opt in with `passive: true` in IDENTIFY or send
+SESSION_MODE (op 27) with `{"passive": true}`. Every five seconds, when there
+are changes, PASSIVE_UPDATE_V2 coalesces channel latest-message markers, the
+user's versioned read states and guild voice changes. Guild channel and voice
+entries are rechecked against current view permission before delivery. Unread
+means the existing client count of unread channels, derived from message and
+read markers; it is not an exact count of unread messages. The current messages
+store does not roll the latest marker back on deletion, so this has the same
+limitation as the existing unread indicator.
+
+SESSION_MODE with `{"passive": false}` fetches a fresh certified read-state
+snapshot and refreshes guild snapshots before resuming guild event delivery.
+A session that has used passive mode must IDENTIFY again after disconnect; it
+cannot replay stale passive frames through RESUME. Missing or lost read-state
+certification causes a retryable close. These options require a compatible
+client and remain opt-in.
+
 ## Multiple gateway replicas
 
 Every gateway pod needs a unique `POD_IP`, the same `RELEASE_COOKIE`, and a
