@@ -4,8 +4,8 @@ defmodule DiscordyGateway.Domain.IntentsTest do
 
   alias DiscordyGateway.Domain.Intents
 
-  test "all/0 covers the sixteen Discord intent bits" do
-    assert Intents.all() == (1 <<< 16) - 1
+  test "all/0 covers the seventeen supported Discord intent bits" do
+    assert Intents.all() == (1 <<< 17) - 1
   end
 
   describe "validate/1" do
@@ -16,7 +16,7 @@ defmodule DiscordyGateway.Domain.IntentsTest do
     end
 
     test "rejects undefined bits and negatives" do
-      assert Intents.validate(1 <<< 16) == {:error, :invalid_intents}
+      assert Intents.validate(1 <<< 17) == {:error, :invalid_intents}
       assert Intents.validate(-1) == {:error, :invalid_intents}
     end
   end
