@@ -4,7 +4,7 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
   alias DiscordyGateway.Application.Events.Ingest
   alias DiscordyGateway.Application.Guild
   alias DiscordyGateway.Application.Ports
-  alias DiscordyGateway.Application.Voice.{Allocator, DrainNode, NodeMonitor}
+  alias DiscordyGateway.Application.Voice.{ActivityReporter, Allocator, DrainNode, NodeMonitor}
   alias DiscordyGateway.Fixtures
 
   defp publish(topic, type, data, fields) do
@@ -57,7 +57,7 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
   defp leave(client, gid), do: join(client, gid, nil)
 
   test "voice transitions report a session generation and close it on leave" do
-    start_supervised!(DiscordyGateway.Application.Voice.ActivityReporter)
+    start_supervised!(ActivityReporter)
     Fakes.put(:voice_checkpoint_observer, self())
     setup_guild("vactivity")
     Fakes.put(:voice_nodes, [voice_node("n", region: "us-east")])
@@ -88,11 +88,11 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
   end
 
   test "voice checkpoint reporter retries the same observation" do
-    start_supervised!(DiscordyGateway.Application.Voice.ActivityReporter)
+    start_supervised!(ActivityReporter)
     Fakes.put(:voice_checkpoint_observer, self())
     Fakes.put(:voice_checkpoint_result, {:error, :unavailable})
     checkpoint = %{"guild_id" => "1", "observed_at" => "2026-11-19T00:00:00Z"}
-    DiscordyGateway.Application.Voice.ActivityReporter.submit(checkpoint)
+    ActivityReporter.submit(checkpoint)
     assert_receive {:voice_checkpoint, ^checkpoint}, 2_000
     Fakes.put(:voice_checkpoint_result, :ok)
     assert_receive {:voice_checkpoint, ^checkpoint}, 4_000
