@@ -5,7 +5,8 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
   alias DiscordyGateway.Fixtures
 
   test "passive batches changed markers, then activation sends a fresh guild snapshot" do
-    guild = Fixtures.guild_payload("100")
+    gid = unique_id()
+    guild = Fixtures.guild_payload(gid)
 
     ready = %{
       "user" => %{"id" => "2"},
@@ -15,19 +16,19 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
       "user_settings" => %{}
     }
 
-    Fakes.put({:guild, "100"}, {:ok, guild})
+    Fakes.put({:guild, gid}, {:ok, guild})
     Fakes.put({:ready, "2"}, {:ok, ready})
     Fakes.put({:read_states, "2"}, {:ok, %{entries: [], versioned: true}})
 
-    active = client("active")
-    passive = client("passive")
+    active = tracked_client("active")
+    passive = tracked_client("passive")
     identify(active.session, "2", %{"device_id" => "active"})
     identify(passive.session, "2", %{"device_id" => "passive", "passive" => true})
     assert await(active, "READY")
     assert await(passive, "READY")
     assert await(active, "GUILD_CREATE")
     assert await(passive, "GUILD_CREATE", 100) == :none
-    send_frame(passive.session, 8, %{"guild_id" => "100", "query" => "", "limit" => 0})
+    send_frame(passive.session, 8, %{"guild_id" => gid, "query" => "", "limit" => 0})
     assert await(passive, "GUILD_MEMBERS_CHUNK", 100) == :none
 
     active_bytes =
@@ -38,7 +39,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
           "content" => String.duplicate("x", 512)
         }
 
-        publish(n, payload)
+        publish(gid, n, payload)
         assert frame = receive_frame("active", "MESSAGE_CREATE")
         bytes + byte_size(Jason.encode!(frame))
       end)
@@ -47,7 +48,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     Fakes.put(:voice_nodes, [voice_node("voice-node", region: "us-east")])
 
     send_frame(active.session, 4, %{
-      "guild_id" => "100",
+      "guild_id" => gid,
       "channel_id" => "12",
       "self_mute" => false,
       "self_deaf" => false
@@ -77,7 +78,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     assert delta = receive_frame("passive", "PASSIVE_UPDATE_V2")
 
     assert delta["d"]["channels"] == [
-             %{"guild_id" => "100", "channel_id" => "10", "last_message_id" => "1010"}
+             %{"guild_id" => gid, "channel_id" => "10", "last_message_id" => "1010"}
            ]
 
     assert delta["d"]["read_states"] == [read]
@@ -93,12 +94,13 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     assert %{"channels" => channels} = await(passive, "GUILD_CREATE")
     assert Enum.find(channels, &(&1["id"] == "10"))["last_message_id"] == "1010"
 
-    publish(11, %{"id" => "1011", "channel_id" => "10", "content" => "after activation"})
+    publish(gid, 11, %{"id" => "1011", "channel_id" => "10", "content" => "after activation"})
     assert %{"id" => "1011"} = await(passive, "MESSAGE_CREATE")
   end
 
   test "permission loss removes buffered markers and read states before a flush" do
-    guild = Fixtures.guild_payload("100")
+    gid = unique_id()
+    guild = Fixtures.guild_payload(gid)
 
     ready = %{
       "user" => %{"id" => "3"},
@@ -108,21 +110,21 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
       "user_settings" => %{}
     }
 
-    Fakes.put({:guild, "100"}, {:ok, guild})
+    Fakes.put({:guild, gid}, {:ok, guild})
     Fakes.put({:ready, "3"}, {:ok, ready})
     Fakes.put({:read_states, "3"}, {:ok, %{entries: [], versioned: true}})
-    passive = client("restricted")
+    passive = tracked_client("restricted")
     identify(passive.session, "3", %{"passive" => true})
     assert await(passive, "READY")
     :sys.get_state(passive.session)
 
     {:ok, guild_pid} =
-      Ports.server_directory().lookup({:guild, "100"})
+      Ports.server_directory().lookup({:guild, gid})
 
     :sys.get_state(guild_pid)
     :sys.get_state(passive.session)
 
-    publish(21, %{"id" => "1021", "channel_id" => "10"})
+    publish(gid, 21, %{"id" => "1021", "channel_id" => "10"})
     :sys.get_state(guild_pid)
     :sys.get_state(passive.session)
 
@@ -146,14 +148,14 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     channel = %{
       "id" => "10",
       "type" => 0,
-      "permission_overwrites" => [%{"id" => "100", "type" => 0, "allow" => "0", "deny" => "1024"}]
+      "permission_overwrites" => [%{"id" => gid, "type" => 0, "allow" => "0", "deny" => "1024"}]
     }
 
     envelope = %{
       "id" => "revoke-21",
       "type" => "CHANNEL_UPDATE",
       "data" => channel,
-      "guild_id" => "100",
+      "guild_id" => gid,
       "channel_id" => "10"
     }
 
@@ -165,6 +167,8 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
   end
 
   test "private thread membership is rechecked at flush and wake" do
+    gid = unique_id()
+
     thread = %{
       "id" => "21",
       "type" => 12,
@@ -174,7 +178,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     }
 
     guild =
-      Fixtures.guild_payload("100")
+      Fixtures.guild_payload(gid)
       |> Map.put("threads", [thread])
       |> Map.put("thread_members", %{"21" => %{"version" => 2, "user_ids" => ["2", "3"]}})
 
@@ -186,14 +190,14 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
       "user_settings" => %{}
     }
 
-    Fakes.put({:guild, "100"}, {:ok, guild})
+    Fakes.put({:guild, gid}, {:ok, guild})
     Fakes.put({:ready, "3"}, {:ok, ready})
     Fakes.put({:read_states, "3"}, {:ok, %{entries: [], versioned: true}})
-    client = client("thread-passive")
+    client = tracked_client("thread-passive")
     identify(client.session, "3", %{"passive" => true})
     assert await(client, "READY")
     :sys.get_state(client.session)
-    {:ok, guild_pid} = Ports.server_directory().lookup({:guild, "100"})
+    {:ok, guild_pid} = Ports.server_directory().lookup({:guild, gid})
     :sys.get_state(guild_pid)
     token = :sys.get_state(client.session).passive_token
     send(client.session, {:passive_flush, token})
@@ -201,11 +205,11 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     assert %{"channels" => [%{"channel_id" => "21", "last_message_id" => "1025"}]} =
              await(client, "PASSIVE_UPDATE_V2")
 
-    publish_thread_message("1026")
+    publish_thread_message(gid, "1026")
     :sys.get_state(guild_pid)
     :sys.get_state(client.session)
-    publish_membership(3, ["2"])
-    publish_membership(2, ["2", "3"])
+    publish_membership(gid, 3, ["2"])
+    publish_membership(gid, 2, ["2", "3"])
     :sys.get_state(guild_pid)
     token = :sys.get_state(client.session).passive_token
     send(client.session, {:passive_flush, token})
@@ -215,19 +219,19 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     send_frame(client.session, 27, %{"passive" => false})
     assert %{"threads" => threads} = await(client, "GUILD_CREATE")
     refute Enum.any?(threads, &(&1["id"] == "21"))
-    publish_membership(4, ["2", "3"])
+    publish_membership(gid, 4, ["2", "3"])
     assert %{"id" => "21"} = await(client, "THREAD_CREATE")
-    publish_thread_message("1027")
+    publish_thread_message(gid, "1027")
     assert %{"id" => "1027"} = await(client, "MESSAGE_CREATE")
   end
 
-  defp publish_thread_message(id) do
+  defp publish_thread_message(gid, id) do
     data = %{"id" => id, "channel_id" => "21"}
 
     envelope = %{
       "id" => "thread-message-#{id}",
       "type" => "MESSAGE_CREATE",
-      "guild_id" => "100",
+      "guild_id" => gid,
       "channel_id" => "21",
       "data" => data
     }
@@ -235,10 +239,10 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     Ingest.handle(:message, Jason.encode!(envelope))
   end
 
-  defp publish_membership(version, users) do
+  defp publish_membership(gid, version, users) do
     data = %{
       "id" => "21",
-      "guild_id" => "100",
+      "guild_id" => gid,
       "added_members" => [],
       "removed_member_ids" => [],
       "_membership_version" => version,
@@ -248,7 +252,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     envelope = %{
       "id" => "thread-members-#{version}",
       "type" => "THREAD_MEMBERS_UPDATE",
-      "guild_id" => "100",
+      "guild_id" => gid,
       "channel_id" => "21",
       "data" => data
     }
@@ -257,6 +261,8 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
   end
 
   test "a private thread with missing parent is hidden even from its owner" do
+    gid = unique_id()
+
     thread = %{
       "id" => "21",
       "type" => 12,
@@ -266,7 +272,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     }
 
     guild =
-      Fixtures.guild_payload("100")
+      Fixtures.guild_payload(gid)
       |> Map.put("threads", [thread])
       |> Map.put("thread_members", %{"21" => %{"version" => 1, "user_ids" => ["3"]}})
 
@@ -278,14 +284,14 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
       "user_settings" => %{}
     }
 
-    Fakes.put({:guild, "100"}, {:ok, guild})
+    Fakes.put({:guild, gid}, {:ok, guild})
     Fakes.put({:ready, "3"}, {:ok, ready})
     Fakes.put({:read_states, "3"}, {:ok, %{entries: [], versioned: true}})
-    client = client("missing-parent")
+    client = tracked_client("missing-parent")
     identify(client.session, "3", %{"passive" => true})
     assert await(client, "READY")
     :sys.get_state(client.session)
-    {:ok, guild_pid} = Ports.server_directory().lookup({:guild, "100"})
+    {:ok, guild_pid} = Ports.server_directory().lookup({:guild, gid})
     :sys.get_state(guild_pid)
     token = :sys.get_state(client.session).passive_token
     send(client.session, {:passive_flush, token})
@@ -296,7 +302,8 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
   end
 
   test "guild removal is sent exactly once to a passive session" do
-    guild = Fixtures.guild_payload("100")
+    gid = unique_id()
+    guild = Fixtures.guild_payload(gid)
 
     ready = %{
       "user" => %{"id" => "3"},
@@ -306,25 +313,25 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
       "user_settings" => %{}
     }
 
-    Fakes.put({:guild, "100"}, {:ok, guild})
+    Fakes.put({:guild, gid}, {:ok, guild})
     Fakes.put({:ready, "3"}, {:ok, ready})
     Fakes.put({:read_states, "3"}, {:ok, %{entries: [], versioned: true}})
-    client = client("removed")
+    client = tracked_client("removed")
     identify(client.session, "3", %{"passive" => true})
     assert await(client, "READY")
     :sys.get_state(client.session)
-    {:ok, guild_pid} = Ports.server_directory().lookup({:guild, "100"})
+    {:ok, guild_pid} = Ports.server_directory().lookup({:guild, gid})
     :sys.get_state(guild_pid)
 
     event = %{
       "id" => "remove-guild-member",
       "type" => "GUILD_MEMBER_REMOVE",
-      "guild_id" => "100",
-      "data" => %{"guild_id" => "100", "user" => %{"id" => "3"}}
+      "guild_id" => gid,
+      "data" => %{"guild_id" => gid, "user" => %{"id" => "3"}}
     }
 
     Ingest.handle(:guild, Jason.encode!(event))
-    assert %{"id" => "100"} = await(client, "GUILD_DELETE")
+    assert %{"id" => gid} = await(client, "GUILD_DELETE")
     assert await(client, "GUILD_DELETE", 100) == :none
   end
 
@@ -343,6 +350,12 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     refute Process.alive?(session)
   end
 
+  defp tracked_client(name) do
+    client = client(name)
+    on_exit(fn -> Process.exit(client.transport, :kill) end)
+    client
+  end
+
   defp receive_frame(name, event) do
     receive do
       {:client, ^name, %{"t" => ^event} = frame} -> frame
@@ -351,13 +364,13 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     end
   end
 
-  defp publish(id, payload) do
+  defp publish(gid, id, payload) do
     envelope = %{
       "id" => "passive-#{id}",
       "type" => "MESSAGE_CREATE",
       "v" => 1,
       "data" => payload,
-      "guild_id" => "100",
+      "guild_id" => gid,
       "channel_id" => "10"
     }
 

@@ -35,6 +35,14 @@ defmodule DiscordyGateway.Interface.SocketTest do
     end
   end
 
+  defp recv_dispatch(conn, event) do
+    case recv(conn) do
+      {:text, %{"t" => ^event}} = frame -> frame
+      {:text, _other} -> recv_dispatch(conn, event)
+      other -> other
+    end
+  end
+
   test "completes HELLO, IDENTIFY and READY over a real WebSocket", %{conn: conn} do
     assert {:ok, stream} = upgrade(conn)
     assert {:text, %{"op" => 10, "d" => %{"heartbeat_interval" => 1000}}} = recv(conn)
@@ -53,8 +61,9 @@ defmodule DiscordyGateway.Interface.SocketTest do
   end
 
   test "a passive WebSocket receives a delta and a fresh snapshot on activation", %{conn: conn} do
-    guild = Fixtures.guild_payload("100")
-    Fakes.put({:guild, "100"}, {:ok, guild})
+    gid = unique_id()
+    guild = Fixtures.guild_payload(gid)
+    Fakes.put({:guild, gid}, {:ok, guild})
 
     Fakes.put(
       {:ready, "2"},
@@ -88,7 +97,7 @@ defmodule DiscordyGateway.Interface.SocketTest do
     :sys.get_state(session)
 
     {:ok, guild_pid} =
-      Ports.server_directory().lookup({:guild, "100"})
+      Ports.server_directory().lookup({:guild, gid})
 
     :sys.get_state(guild_pid)
     :sys.get_state(session)
@@ -96,7 +105,7 @@ defmodule DiscordyGateway.Interface.SocketTest do
     event = %{
       "id" => "ws-message",
       "type" => "MESSAGE_CREATE",
-      "guild_id" => "100",
+      "guild_id" => gid,
       "channel_id" => "10",
       "data" => %{"id" => "1050", "channel_id" => "10", "content" => "private body"}
     }
@@ -110,7 +119,7 @@ defmodule DiscordyGateway.Interface.SocketTest do
             %{
               "t" => "PASSIVE_UPDATE_V2",
               "d" => %{"channels" => [%{"last_message_id" => "1050"}]}
-            }} = recv(conn)
+            }} = recv_dispatch(conn, "PASSIVE_UPDATE_V2")
 
     :gun.ws_send(
       conn,
@@ -118,8 +127,11 @@ defmodule DiscordyGateway.Interface.SocketTest do
       {:text, Jason.encode!(%{"op" => 27, "d" => %{"passive" => false}})}
     )
 
-    assert {:text, %{"t" => "READ_STATE_SYNC"}} = recv(conn)
-    assert {:text, %{"t" => "GUILD_CREATE", "d" => %{"channels" => channels}}} = recv(conn)
+    assert {:text, %{"t" => "READ_STATE_SYNC"}} = recv_dispatch(conn, "READ_STATE_SYNC")
+
+    assert {:text, %{"t" => "GUILD_CREATE", "d" => %{"channels" => channels}}} =
+             recv_dispatch(conn, "GUILD_CREATE")
+
     assert Enum.find(channels, &(&1["id"] == "10"))["last_message_id"] == "1050"
   end
 
