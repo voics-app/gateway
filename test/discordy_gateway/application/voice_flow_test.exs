@@ -314,6 +314,24 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
       Process.sleep(30)
     end
 
+    test "stage joins and moderator moves are refused until audience enforcement exists" do
+      setup_guild("stage-closed")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+      alice = online_in("stage-closed", "2")
+      bob = online_in("stage-closed", "3")
+      publish(:guild, "CHANNEL_CREATE", %{"id" => "14", "type" => 13, "name" => "stage", "guild_id" => "stage-closed"}, %{"guild_id" => "stage-closed"})
+      Process.sleep(30)
+      join(alice, "stage-closed", "14")
+      assert %{"channel_id" => nil} = await(alice, "VOICE_STATE_UPDATE")
+      assert :none = await(alice, "VOICE_SERVER_UPDATE", 100)
+      join(alice, "stage-closed", "12")
+      await(alice, "VOICE_SERVER_UPDATE")
+      await(bob, "VOICE_STATE_UPDATE")
+      moderate("stage-closed", "2", "14")
+      refute_receive {:client, "3", %{"t" => "VOICE_STATE_UPDATE", "d" => %{"channel_id" => "14"}}}, 150
+      assert :none = await(alice, "VOICE_SERVER_UPDATE", 100)
+    end
+
     test "a move re-homes the member to the target channel with a fresh token" do
       setup_guild("m1")
       Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])

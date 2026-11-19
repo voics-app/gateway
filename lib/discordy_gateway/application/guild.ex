@@ -371,7 +371,7 @@ defmodule DiscordyGateway.Application.Guild do
     now = System.os_time(:millisecond)
     permissions = GuildState.channel_permissions(state.cache, sub.user_id, channel_id, now)
 
-    if GuildState.voice_channel?(state.cache, channel_id) and
+    if supported_voice_channel?(state.cache, channel_id) and
          Permissions.has?(permissions, :connect) do
       apply_voice(state, sub, request, join_opts(state, channel_id))
     else
@@ -384,6 +384,10 @@ defmodule DiscordyGateway.Application.Guild do
       state
     end
   end
+
+  # Stage publishing is disabled until server-side audience enforcement is available.
+  defp supported_voice_channel?(cache, channel_id),
+    do: match?(%{"type" => 2}, GuildState.channel(cache, channel_id))
 
   defp join_opts(state, channel_id) do
     %{
@@ -402,7 +406,7 @@ defmodule DiscordyGateway.Application.Guild do
   defp move_member(state, user_id, target) do
     with %{} = current <- VoiceStates.get(state.room.states, user_id),
          {:ok, sub} <- subscriber_by_session(state, current.session_id),
-         true <- target == nil or GuildState.voice_channel?(state.cache, target),
+         true <- target == nil or supported_voice_channel?(state.cache, target),
          true <- target != current.channel_id do
       request = %{
         guild_id: state.id,
