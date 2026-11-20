@@ -7,3 +7,4 @@ defmodule DiscordyGateway.Application.Ports.VoiceCapabilityControl do
   @callback apply(node_id :: String.t(), registration_lease :: pos_integer(), command :: map()) ::
               {:ok, map()} | {:error, term()}
 end
+

@@ -99,3 +99,4 @@ defmodule DiscordyGateway.Domain.Voice.Capabilities do
 
   def renew_due?(%__MODULE__{}, _now, _margin), do: true
 end
+
