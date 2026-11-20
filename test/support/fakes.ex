@@ -218,6 +218,12 @@ defmodule DiscordyGateway.Fakes.VoiceNodes do
   end
 end
 
+defmodule DiscordyGateway.Fakes.VoiceCapabilityControl do
+  @moduledoc false
+
+  def apply(_node, _session_id, update), do: {:ok, update}
+end
+
 defmodule DiscordyGateway.Fakes.VoiceAllocations do
   @moduledoc false
   @behaviour DiscordyGateway.Application.Ports.VoiceAllocationStore

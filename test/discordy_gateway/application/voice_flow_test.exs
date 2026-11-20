@@ -311,6 +311,49 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
     assert %{"channel_id" => nil, "user_id" => "2"} = await_left(bob)
   end
 
+  test "ordinary voice publication follows the current gateway socket lifecycle" do
+    setup_guild("soundboard-guarded")
+    Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+
+    first = online_in("soundboard-guarded", "1")
+    join(first, "soundboard-guarded", "12")
+
+    assert %{"channel_id" => "12", "session_id" => first_session} =
+             await_in(first, "12")
+
+    assert %{"channel_id" => "12"} = await(first, "VOICE_SERVER_UPDATE")
+    first_grant = await_capability("soundboard-guarded", "12", "1")
+    assert first_grant["session_id"] == first_session
+    assert first_grant["can_publish_audio"] == true
+    assert first_grant["can_publish_soundboard"] == true
+
+    replacement = online_in("soundboard-guarded", "1")
+    join(replacement, "soundboard-guarded", "12")
+
+    assert %{"channel_id" => "12", "session_id" => replacement_session} =
+             await_in(replacement, "12")
+
+    refute replacement_session == first_session
+    assert %{"channel_id" => "12"} = await(replacement, "VOICE_SERVER_UPDATE")
+    replacement_grant = await_capability("soundboard-guarded", "12", "1")
+    assert replacement_grant["session_id"] == replacement_session
+
+    # Closing the replaced socket cannot remove or authorize the replacement session.
+    GenServer.stop(first.session)
+    assert await_capability("soundboard-guarded", "12", "1")["session_id"] ==
+             replacement_session
+
+    GenServer.stop(replacement.session)
+    Process.sleep(20)
+
+    assert :unavailable =
+             DiscordyGateway.Application.Guild.publish_permissions(
+               "soundboard-guarded",
+               "12",
+               "1"
+             )
+  end
+
   describe "moderator move and disconnect (api#24)" do
     defp moderate(gid, user, channel) do
       publish(
@@ -415,7 +458,7 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
 
     test "stage joins and moderator moves are refused until audience enforcement exists" do
       setup_guild("stage-closed")
-      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east", control_endpoint: nil)])
       alice = online_in("stage-closed", "2")
       bob = online_in("stage-closed", "3")
 

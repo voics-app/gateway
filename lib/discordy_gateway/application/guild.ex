@@ -52,7 +52,7 @@ defmodule DiscordyGateway.Application.Guild do
   def event(guild_id, %EventEnvelope{} = envelope),
     do: cast(guild_id, {:event, envelope, System.monotonic_time()})
 
-  @doc "Returns a fresh, acknowledged stage publication snapshot for a current member."
+  @doc "Returns a fresh, acknowledged publication snapshot owned by the member's current socket."
   @spec publish_permissions(String.t(), String.t(), String.t()) :: {:ok, map()} | :unavailable
   def publish_permissions(guild_id, channel_id, user_id) do
     with {:ok, pid} <- Ports.server_directory().lookup({:guild, guild_id}) do
@@ -122,7 +122,10 @@ defmodule DiscordyGateway.Application.Guild do
       with %{channel_id: ^channel_id, guarded_publish: true} = voice <-
              VoiceStates.get(state.room.states, user_id),
            true <- GuildState.member?(state.cache, user_id),
-           %{pid: pid} <- Map.get(state.capabilities, voice.session_id),
+           {:ok, %{pid: socket_pid, user_id: ^user_id}} <-
+             subscriber_by_session(state, voice.session_id),
+           %{pid: pid, socket_pid: ^socket_pid} <-
+             Map.get(state.capabilities, voice.session_id),
            {:ok, grant} when is_map(grant) <- CapabilitySession.current(pid),
            bits <-
              GuildState.channel_permissions(
@@ -512,7 +515,10 @@ defmodule DiscordyGateway.Application.Guild do
   end
 
   defp apply_voice(state, sub, request, opts) do
-    guarded = stage_channel?(state.cache, request.channel_id)
+    # Every guild voice session is guarded so ordinary voice soundboard publication uses the
+    # same bounded, node-affine lifecycle as stage audio. Stage suppression remains stage-only.
+    guarded = request.channel_id != nil
+    stage = stage_channel?(state.cache, request.channel_id)
 
     bits =
       if guarded,
@@ -525,7 +531,7 @@ defmodule DiscordyGateway.Application.Guild do
           ),
         else: 0
 
-    host = guarded and Permissions.has?(bits, :manage_channels) and Permissions.has?(bits, :speak)
+    host = stage and Permissions.has?(bits, :manage_channels) and Permissions.has?(bits, :speak)
     request = request |> Map.put(:guarded_publish, guarded) |> Map.put(:stage_host, host)
     previous = VoiceStates.get(state.room.states, sub.user_id)
     {room, effects} = Room.update(state.room, member(sub), request, opts)
@@ -542,7 +548,8 @@ defmodule DiscordyGateway.Application.Guild do
       state
     else
       state =
-        if previous && previous.channel_id != request.channel_id,
+        if previous &&
+             (previous.channel_id != request.channel_id or previous.session_id != sub.session_id),
           do: stop_capability(state, previous.session_id),
           else: state
 
@@ -596,7 +603,7 @@ defmodule DiscordyGateway.Application.Guild do
           )
 
         {acc, voice} =
-          if not voice.suppress and
+          if stage_channel?(acc.cache, voice.channel_id) and not voice.suppress and
                (not Permissions.has?(bits, :manage_channels) or not Permissions.has?(bits, :speak)) do
             states = VoiceStates.set_suppress(acc.room.states, voice.user_id, true)
             voice = VoiceStates.get(states, voice.user_id)
@@ -625,7 +632,10 @@ defmodule DiscordyGateway.Application.Guild do
   end
 
   defp start_stage_capability(state, voice, bits) do
-    with {:ok, node} <- Ports.voice_nodes().get_node(state.room.node_id),
+    with {:ok, %{pid: socket_pid, user_id: user_id}} <-
+           subscriber_by_session(state, voice.session_id),
+         true <- user_id == voice.user_id,
+         {:ok, node} <- Ports.voice_nodes().get_node(state.room.node_id),
          %{lease: lease} <- VoiceNode.validated_control(node),
          {lease_id, ""} <- Integer.parse(lease),
          {:ok, pid} <-
@@ -642,7 +652,7 @@ defmodule DiscordyGateway.Application.Guild do
            ) do
       Process.unlink(pid)
       ref = Process.monitor(pid)
-      put_in(state.capabilities[voice.session_id], %{pid: pid, ref: ref})
+      put_in(state.capabilities[voice.session_id], %{pid: pid, ref: ref, socket_pid: socket_pid})
     else
       _ -> remove_voice_session(state, voice.session_id)
     end
