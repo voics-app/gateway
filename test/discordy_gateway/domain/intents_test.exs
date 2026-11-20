@@ -4,8 +4,8 @@ defmodule DiscordyGateway.Domain.IntentsTest do
 
   alias DiscordyGateway.Domain.Intents
 
-  test "all/0 covers the sixteen Discord intent bits" do
-    assert Intents.all() == (1 <<< 16) - 1
+  test "all/0 covers the seventeen supported Discord intent bits" do
+    assert Intents.all() == (1 <<< 17) - 1
   end
 
   describe "validate/1" do
@@ -16,7 +16,7 @@ defmodule DiscordyGateway.Domain.IntentsTest do
     end
 
     test "rejects undefined bits and negatives" do
-      assert Intents.validate(1 <<< 16) == {:error, :invalid_intents}
+      assert Intents.validate(1 <<< 17) == {:error, :invalid_intents}
       assert Intents.validate(-1) == {:error, :invalid_intents}
     end
   end
@@ -55,6 +55,14 @@ defmodule DiscordyGateway.Domain.IntentsTest do
       assert Intents.required_for("MESSAGE_CREATE", :guild) == 1 <<< 9
       assert Intents.required_for("MESSAGE_REACTION_ADD", :guild) == 1 <<< 10
       assert Intents.required_for("TYPING_START", :guild) == 1 <<< 11
+
+      for event <- ~w(GUILD_SCHEDULED_EVENT_CREATE GUILD_SCHEDULED_EVENT_UPDATE
+                      GUILD_SCHEDULED_EVENT_DELETE GUILD_SCHEDULED_EVENT_USER_ADD
+                      GUILD_SCHEDULED_EVENT_USER_REMOVE) do
+        assert Intents.required_for(event, :guild) == 1 <<< 16
+        refute Intents.allows?(0, event, :guild)
+        assert Intents.allows?(1 <<< 16, event, :guild)
+      end
     end
 
     test "message events outside guilds map to direct message intents" do
