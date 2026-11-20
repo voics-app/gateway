@@ -56,6 +56,7 @@ defmodule DiscordyGateway.Application.Voice.CapabilitySessionTest do
     assert_receive {:control, worker, "session", ^first}, 1_000
     assert CapabilitySession.current(pid) == :unavailable
     send(worker, {:reply, {:ok, first}})
+    assert_receive {:voice_capability_applied, "session", ^first}
     assert {:ok, %{"revision" => 1}} = await_current(pid)
 
     CapabilitySession.update(pid, permissions([:view_channel, :connect, :speak]), false)
@@ -63,6 +64,7 @@ defmodule DiscordyGateway.Application.Voice.CapabilitySessionTest do
     assert second["revision"] == 2
     refute second["can_publish_video"]
     send(worker, {:reply, {:ok, second}})
+    assert_receive {:voice_capability_applied, "session", ^second}
     refute_receive {:voice_capability_failed, _, _}, 50
     GenServer.stop(pid)
   end

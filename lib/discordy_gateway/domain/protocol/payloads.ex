@@ -43,7 +43,8 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          {:ok, self_mute} <- boolean(d, "self_mute", :required),
          {:ok, self_deaf} <- boolean(d, "self_deaf", :required),
          {:ok, self_video} <- boolean(d, "self_video", false),
-         {:ok, self_stream} <- boolean(d, "self_stream", false) do
+         {:ok, self_stream} <- boolean(d, "self_stream", false),
+         {:ok, request_to_speak} <- request_to_speak(d) do
       {:ok,
        %{
          guild_id: guild_id,
@@ -51,8 +52,25 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          self_mute: self_mute,
          self_deaf: self_deaf,
          self_video: self_video,
-         self_stream: self_stream
+         self_stream: self_stream,
+         request_to_speak: request_to_speak
        }}
+    end
+  end
+
+  defp request_to_speak(d) do
+    if Map.has_key?(d, "request_to_speak_timestamp") do
+      case Map.get(d, "request_to_speak_timestamp") do
+        nil -> {:ok, nil}
+        value when is_binary(value) and value != "" ->
+          case DateTime.from_iso8601(value) do
+            {:ok, _datetime, _offset} -> {:ok, value}
+            _ -> {:error, {:invalid, "request_to_speak_timestamp"}}
+          end
+        _ -> {:error, {:invalid, "request_to_speak_timestamp"}}
+      end
+    else
+      {:ok, :unchanged}
     end
   end
 

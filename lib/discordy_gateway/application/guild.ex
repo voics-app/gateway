@@ -104,6 +104,7 @@ defmodule DiscordyGateway.Application.Guild do
        subs: %{},
        room: Room.new(id, id),
        capabilities: %{},
+       stage_changes: %{},
        idle: nil
      }, {:continue, :load}}
   end
@@ -210,6 +211,28 @@ defmodule DiscordyGateway.Application.Guild do
 
   def handle_info({:voice_capability_failed, session_id, _reason}, state),
     do: {:noreply, remove_voice_session(state, session_id)}
+
+  def handle_info({:voice_capability_applied, session_id, update}, state) do
+    case Map.pop(state.stage_changes, session_id) do
+      {nil, _remaining} ->
+        {:noreply, state}
+
+      {%{user_id: user_id, suppress: suppress}, remaining} ->
+        expected_audio = not suppress
+
+        with true <- update["can_publish_audio"] == expected_audio,
+             %{session_id: ^session_id, guarded_publish: true} = voice <-
+               VoiceStates.get(state.room.states, user_id) do
+          states = VoiceStates.set_suppress(state.room.states, user_id, suppress)
+          voice = VoiceStates.get(states, user_id)
+          state = %{state | room: %{state.room | states: states}, stage_changes: remaining}
+          broadcast_voice_state(state, VoiceStates.to_payload(voice, state.id), voice.channel_id)
+          {:noreply, refresh_stage_capabilities(state)}
+        else
+          _ -> {:noreply, remove_voice_session(%{state | stage_changes: remaining}, session_id)}
+        end
+    end
+  end
 
   def handle_info(:idle_check, %{subs: subs} = state) when map_size(subs) == 0,
     do: {:stop, :normal, state}
@@ -353,9 +376,21 @@ defmodule DiscordyGateway.Application.Guild do
 
   ## Events
 
-  # Bus-only (api#24): a moderator moved or disconnected a member. Never fanned out to clients.
-  defp handle_event(%EventEnvelope{type: "VOICE_MEMBER_MOVE", data: data}, state),
-    do: {:noreply, move_member(state, data["user_id"], data["channel_id"])}
+  # Bus-only (api#24/voice#9): a moderator moved/disconnected a member or changed their stage
+  # speaker status. Never fanned out directly; clients observe the authoritative voice state.
+  defp handle_event(%EventEnvelope{type: "VOICE_MEMBER_MOVE", data: data}, state) do
+    state =
+      if Map.has_key?(data, "channel_id"),
+        do: move_member(state, data["user_id"], data["channel_id"]),
+        else: state
+
+    state =
+      if is_boolean(data["suppress"]),
+        do: moderate_stage_member(state, data["user_id"], data["suppress"]),
+        else: state
+
+    {:noreply, state}
+  end
 
   # Bus-only (api#52): asks the messages service to purge a banned user's recent messages. The
   # clients learn about it through MESSAGE_DELETE_BULK; this event is never fanned out.
@@ -506,6 +541,29 @@ defmodule DiscordyGateway.Application.Guild do
     end
   end
 
+  defp moderate_stage_member(state, user_id, suppress) do
+    with %{guarded_publish: true} = voice <- VoiceStates.get(state.room.states, user_id),
+         true <- voice.suppress != suppress,
+         %{pid: pid} <- Map.get(state.capabilities, voice.session_id) do
+      bits =
+        GuildState.channel_permissions(
+          state.cache,
+          voice.user_id,
+          voice.channel_id,
+          System.os_time(:millisecond)
+        )
+
+      CapabilitySession.update(pid, bits, suppress)
+
+      put_in(state.stage_changes[voice.session_id], %{
+        user_id: voice.user_id,
+        suppress: suppress
+      })
+    else
+      _ -> state
+    end
+  end
+
   defp subscriber_by_session(state, session_id) do
     state.subs
     |> Map.values()
@@ -587,7 +645,11 @@ defmodule DiscordyGateway.Application.Guild do
       {%{pid: pid, ref: ref}, remaining} ->
         Process.demonitor(ref, [:flush])
         if Process.alive?(pid), do: GenServer.stop(pid, :normal)
-        %{state | capabilities: remaining}
+        %{
+          state
+          | capabilities: remaining,
+            stage_changes: Map.delete(state.stage_changes, session_id)
+        }
     end
   end
 
