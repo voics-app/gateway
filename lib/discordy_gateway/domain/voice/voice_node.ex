@@ -60,6 +60,13 @@ defmodule DiscordyGateway.Domain.Voice.VoiceNode do
   end
 
   defp control_endpoint(_raw), do: nil
+
+  @doc "Returns a validated private control endpoint, if this registration has one."
+  @spec validated_control(t()) :: map() | nil
+  def validated_control(%__MODULE__{control_endpoint: %{ip: ip, port: port, lease: lease}}),
+    do: control_endpoint(%{"control_ip" => ip, "control_port" => port, "registration_lease" => lease})
+
+  def validated_control(_node), do: nil
   defp private_ipv4?({10, _, _, _}), do: true
   defp private_ipv4?({172, b, _, _}) when b in 16..31, do: true
   defp private_ipv4?({192, 168, _, _}), do: true
