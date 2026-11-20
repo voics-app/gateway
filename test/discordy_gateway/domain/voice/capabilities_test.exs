@@ -26,6 +26,7 @@ defmodule DiscordyGateway.Domain.Voice.CapabilitiesTest do
 
   test "grants are session and lease bound, acknowledged exactly, and renewed before expiry" do
     state = Capabilities.new("session", "node", 42)
+    assert Capabilities.expired?(state, 1_000)
     assert Capabilities.renew_due?(state, 1_000, 5_000)
     assert {:ok, pending, command} = Capabilities.prepare(state, 0, false, 1_000, 15_000)
     assert command["revision"] == 1
@@ -37,6 +38,8 @@ defmodule DiscordyGateway.Domain.Voice.CapabilitiesTest do
     assert {:error, :expired, %{applied: nil, pending: nil}, :disconnect} =
              Capabilities.acknowledge(pending, command, 16_000)
     assert {:ok, applied} = Capabilities.acknowledge(pending, command, 1_001)
+    refute Capabilities.expired?(applied, 15_999)
+    assert Capabilities.expired?(applied, 16_000)
     refute Capabilities.renew_due?(applied, 10_999, 5_000)
     assert Capabilities.renew_due?(applied, 11_000, 5_000)
     assert {:ok, next, %{"revision" => 2}} =

@@ -87,6 +87,11 @@ defmodule DiscordyGateway.Domain.Voice.Capabilities do
   @spec fail(t()) :: {t(), :disconnect}
   def fail(%__MODULE__{} = state), do: {%{state | pending: nil, applied: nil}, :disconnect}
 
+  @doc "An absent or elapsed acknowledged grant must be treated as denied."
+  @spec expired?(t(), integer()) :: boolean()
+  def expired?(%__MODULE__{applied: %{"expires_at" => expires}}, now), do: now >= expires
+  def expired?(%__MODULE__{}, _now), do: true
+
   @doc "Renew before the supplied margin; pending or absent grants are never considered current."
   @spec renew_due?(t(), integer(), non_neg_integer()) :: boolean()
   def renew_due?(%__MODULE__{pending: nil, applied: %{"expires_at" => expires}}, now, margin),
