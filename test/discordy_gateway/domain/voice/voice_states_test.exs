@@ -87,4 +87,23 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStatesTest do
     assert {:updated, states} = VoiceStates.update(states, "u1", "s1", req("c1", self_mute: true))
     assert VoiceStates.get(states, "u1").e2ee == true
   end
+
+  test "guarded stage joins start suppressed and cannot self-promote" do
+    request = Map.put(req("stage"), :guarded_publish, true)
+    {_, states} = VoiceStates.update(fresh(), "u1", "s1", request)
+    assert %{guarded_publish: true, suppress: true} = VoiceStates.get(states, "u1")
+    assert VoiceStates.to_payload(VoiceStates.get(states, "u1"), "g1")["suppress"]
+    {_, states} = VoiceStates.update(states, "u1", "s1", Map.put(request, :suppress, false))
+    assert VoiceStates.get(states, "u1").suppress
+    {_, states} = VoiceStates.update(states, "u1", "s1", req("ordinary"))
+    refute VoiceStates.get(states, "u1").suppress
+  end
+
+  test "server-authorized stage host can start as a speaker" do
+    request = req("stage") |> Map.put(:guarded_publish, true) |> Map.put(:stage_host, true)
+    {_, states} = VoiceStates.update(fresh(), "host", "s1", request)
+    refute VoiceStates.get(states, "host").suppress
+    states = VoiceStates.set_suppress(states, "host", true)
+    assert VoiceStates.get(states, "host").suppress
+  end
 end

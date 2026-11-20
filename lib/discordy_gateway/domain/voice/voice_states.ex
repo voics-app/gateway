@@ -15,7 +15,9 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStates do
           self_deaf: boolean(),
           self_video: boolean(),
           self_stream: boolean(),
-          e2ee: boolean()
+          e2ee: boolean(),
+          guarded_publish: boolean(),
+          suppress: boolean()
         }
   @type t :: %__MODULE__{states: %{String.t() => state()}}
   @type change :: :joined | :moved | :updated | :left | :noop
@@ -40,7 +42,9 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStates do
       self_deaf: request.self_deaf,
       self_video: request.self_video,
       self_stream: request.self_stream,
-      e2ee: carried_e2ee(states, user_id)
+      e2ee: carried_e2ee(states, user_id),
+      guarded_publish: Map.get(request, :guarded_publish, false),
+      suppress: stage_suppressed(states, user_id, session_id, request)
     }
 
     change =
@@ -54,11 +58,32 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStates do
     {change, %{vs | states: Map.put(states, user_id, state)}}
   end
 
+  defp stage_suppressed(states, user_id, session_id, request) do
+    if Map.get(request, :guarded_publish, false) do
+      case Map.get(states, user_id) do
+        %{channel_id: channel, session_id: ^session_id, guarded_publish: true, suppress: suppress}
+        when channel == request.channel_id ->
+          suppress
+
+        _ ->
+          not Map.get(request, :stage_host, false)
+      end
+    else
+      false
+    end
+  end
+
   defp carried_e2ee(states, user_id) do
     case Map.fetch(states, user_id) do
       {:ok, %{e2ee: e2ee}} -> e2ee
       :error -> false
     end
+  end
+
+  @doc "Updates server-controlled stage suppression."
+  @spec set_suppress(t(), String.t(), boolean()) :: t()
+  def set_suppress(%__MODULE__{states: states} = vs, user_id, suppress) do
+    %{vs | states: Map.update!(states, user_id, &Map.put(&1, :suppress, suppress))}
   end
 
   @doc "Records the E2EE flag of the token issued to `user_id`."
@@ -104,7 +129,7 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStates do
       "self_mute" => state.self_mute,
       "self_video" => state.self_video,
       "self_stream" => state.self_stream,
-      "suppress" => false
+      "suppress" => Map.get(state, :suppress, false)
     }
   end
 

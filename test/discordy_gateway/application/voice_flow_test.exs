@@ -22,6 +22,24 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
     Ingest.handle(topic, Jason.encode!(envelope))
   end
 
+  defmodule StageControl do
+    def apply(_node, _session_id, update), do: {:ok, update}
+  end
+
+  defp await_capability(guild, channel, user, attempts \\ 100) do
+    case DiscordyGateway.Application.Guild.publish_permissions(guild, channel, user) do
+      {:ok, grant} ->
+        grant
+
+      :unavailable when attempts > 0 ->
+        Process.sleep(20)
+        await_capability(guild, channel, user, attempts - 1)
+
+      :unavailable ->
+        flunk("capability did not become available")
+    end
+  end
+
   defp setup_guild(gid) do
     payload = Fixtures.guild_payload(gid)
 
@@ -312,6 +330,87 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
       )
 
       Process.sleep(30)
+    end
+
+    test "stage audience gets a guarded acknowledged deny and membership lookup closes on leave" do
+      setup_guild("stage-guarded")
+      previous = Application.get_env(:discordy_gateway, :voice_capability_control)
+      Application.put_env(:discordy_gateway, :voice_capability_control, StageControl)
+
+      on_exit(fn ->
+        if previous,
+          do: Application.put_env(:discordy_gateway, :voice_capability_control, previous),
+          else: Application.delete_env(:discordy_gateway, :voice_capability_control)
+      end)
+
+      node =
+        voice_node("a",
+          region: "us-east",
+          control_endpoint: %{ip: "10.42.0.8", port: 4100, lease: "123"}
+        )
+
+      Fakes.put(:voice_nodes, [node])
+      alice = online_in("stage-guarded", "2")
+
+      publish(
+        :guild,
+        "CHANNEL_CREATE",
+        %{
+          "id" => "14",
+          "type" => 13,
+          "name" => "stage",
+          "voice_region" => "us-east",
+          "guild_id" => "stage-guarded"
+        },
+        %{"guild_id" => "stage-guarded"}
+      )
+
+      Process.sleep(30)
+      join(alice, "stage-guarded", "14")
+
+      assert %{"channel_id" => "14", "suppress" => true, "session_id" => session_id} =
+               await(alice, "VOICE_STATE_UPDATE")
+
+      assert %{"channel_id" => "14"} = await(alice, "VOICE_SERVER_UPDATE")
+      grant = await_capability("stage-guarded", "14", "2")
+      assert grant["session_id"] == session_id
+      assert grant["can_publish_audio"] == false
+      assert grant["can_publish_video"] == false
+      assert grant["can_publish_soundboard"] == false
+      assert grant["expires_at"] > System.os_time(:millisecond)
+      path = "/internal/v1/voice/guilds/stage-guarded/channels/14/members/2/publish-permissions"
+
+      request =
+        Plug.Test.conn(:get, path)
+        |> Plug.Conn.put_req_header("x-internal-token", "test-internal-token")
+
+      response =
+        DiscordyGateway.Interface.Router.call(request, DiscordyGateway.Interface.Router.init([]))
+
+      assert response.status == 200
+      assert Jason.decode!(response.resp_body) == grant
+
+      assert DiscordyGateway.Interface.Router.call(
+               Plug.Test.conn(:get, path),
+               DiscordyGateway.Interface.Router.init([])
+             ).status == 401
+
+      assert :unavailable =
+               DiscordyGateway.Application.Guild.publish_permissions("stage-guarded", "14", "3")
+
+      leave(alice, "stage-guarded")
+      await_left(alice)
+
+      assert :unavailable =
+               DiscordyGateway.Application.Guild.publish_permissions("stage-guarded", "14", "2")
+
+      host = online_in("stage-guarded", "1")
+      join(host, "stage-guarded", "14")
+      assert %{"channel_id" => "14", "suppress" => false} = await_in(host, "14")
+      assert %{"channel_id" => "14"} = await(host, "VOICE_SERVER_UPDATE")
+      host_grant = await_capability("stage-guarded", "14", "1")
+      assert host_grant["can_publish_audio"] == true
+      assert host_grant["expires_at"] > System.os_time(:millisecond)
     end
 
     test "stage joins and moderator moves are refused until audience enforcement exists" do
