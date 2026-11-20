@@ -26,4 +26,17 @@ defmodule DiscordyGateway.Infrastructure.VoiceControlTest do
     Req.Test.stub(__MODULE__, &send_resp(&1, 403, "{}"))
     assert {:error, {:http_status, 403}} = VoiceControl.revoke(node, "session-1")
   end
+  test "atomic permissions require matching node acknowledgement" do
+    node = %VoiceNode{node_id: "n", region: "r", ws_url: "wss://public.test", control_endpoint: %{ip: "10.42.0.8", port: 4100, lease: "123"}}
+    update = %{revision: 3, expires_at: 1234, can_publish_audio: true, can_publish_video: false, can_publish_soundboard: false}
+    Req.Test.stub(__MODULE__, fn conn ->
+      assert conn.request_path == "/internal/v1/sessions/session-1/publish-permissions"
+      assert get_req_header(conn, "x-voice-registration-lease") == ["123"]
+      Req.Test.json(conn, %{"applied" => true, "session_id" => "session-1", "revision" => 3})
+    end)
+    assert {:ok, ^update} = VoiceControl.apply(node, "session-1", update)
+    Req.Test.stub(__MODULE__, fn conn -> Req.Test.json(conn, %{"applied" => true, "session_id" => "session-1", "revision" => 2}) end)
+    assert {:error, :invalid_ack} = VoiceControl.apply(node, "session-1", update)
+  end
+
 end
