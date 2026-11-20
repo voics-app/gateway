@@ -243,7 +243,16 @@ defmodule DiscordyGateway.Application.Guild do
     state =
       if state.room.node_id == node_id do
         Enum.reduce(VoiceStates.all(state.room.states), state, fn voice, acc ->
-          if voice.guarded_publish, do: remove_voice_session(acc, voice.session_id), else: acc
+          cond do
+            voice.guarded_publish and stage_channel?(acc.cache, voice.channel_id) ->
+              remove_voice_session(acc, voice.session_id)
+
+            voice.guarded_publish ->
+              stop_capability(acc, voice.session_id)
+
+            true ->
+              acc
+          end
         end)
       else
         state
@@ -253,7 +262,7 @@ defmodule DiscordyGateway.Application.Guild do
       Room.node_gone(state.room, node_id, fn id -> Ports.session_directory().whereis(id) end)
 
     Effects.run(effects, &broadcast_voice_state(state, &1, &2))
-    {:noreply, %{state | room: room}}
+    {:noreply, refresh_stage_capabilities(%{state | room: room})}
   end
 
   def handle_info(_message, state), do: {:noreply, state}
@@ -543,6 +552,7 @@ defmodule DiscordyGateway.Application.Guild do
 
   defp moderate_stage_member(state, user_id, suppress) do
     with %{guarded_publish: true} = voice <- VoiceStates.get(state.room.states, user_id),
+         true <- stage_channel?(state.cache, voice.channel_id),
          true <- voice.suppress != suppress,
          %{pid: pid} <- Map.get(state.capabilities, voice.session_id) do
       bits =
@@ -589,7 +599,9 @@ defmodule DiscordyGateway.Application.Guild do
           ),
         else: 0
 
-    host = stage and Permissions.has?(bits, :manage_channels) and Permissions.has?(bits, :speak)
+    host =
+      not stage or
+        (Permissions.has?(bits, :manage_channels) and Permissions.has?(bits, :speak))
     request = request |> Map.put(:guarded_publish, guarded) |> Map.put(:stage_host, host)
     previous = VoiceStates.get(state.room.states, sub.user_id)
     {room, effects} = Room.update(state.room, member(sub), request, opts)
