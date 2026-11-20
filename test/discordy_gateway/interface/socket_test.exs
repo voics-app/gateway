@@ -61,6 +61,15 @@ defmodule DiscordyGateway.Interface.SocketTest do
   end
 
   test "a passive WebSocket receives a delta and a fresh snapshot on activation", %{conn: conn} do
+    settings = Application.fetch_env!(:discordy_gateway, :settings)
+
+    Application.put_env(
+      :discordy_gateway,
+      :settings,
+      Keyword.put(settings, :identify_timeout_ms, 5_000)
+    )
+
+    on_exit(fn -> Application.put_env(:discordy_gateway, :settings, settings) end)
     gid = unique_id()
     guild = Fixtures.guild_payload(gid)
     Fakes.put({:guild, gid}, {:ok, guild})

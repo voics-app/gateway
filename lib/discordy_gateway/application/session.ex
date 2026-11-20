@@ -193,6 +193,8 @@ defmodule DiscordyGateway.Application.Session do
         {:guild_dispatch, guild_id, event, encoded, gate},
         %{status: :identified} = state
       ) do
+    state = forget_deleted_channel(state, guild_id, event, encoded)
+
     cond do
       state.passive -> {:noreply, capture_guild_event(state, guild_id, event, encoded, gate)}
       MapSet.member?(state.refreshing_guilds, guild_id) -> {:noreply, state}
@@ -351,11 +353,22 @@ defmodule DiscordyGateway.Application.Session do
   def terminate(_reason, _state), do: :ok
 
   defp flush_passive(state) do
+    requested =
+      (PassiveUpdates.permission_pairs(state.passive_updates, state.channel_guilds) ++
+         PassiveUpdates.permission_pairs(state.passive_sent, state.channel_guilds))
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+
+    allowed =
+      Map.new(requested, fn {guild_id, channels} ->
+        case Guild.visible_channels(guild_id, self(), Enum.uniq(channels)) do
+          {:ok, ids} -> {guild_id, MapSet.new(ids)}
+          :error -> throw(:permission_unavailable)
+        end
+      end)
+
     visible = fn guild_id, channels ->
-      case Guild.visible_channels(guild_id, self(), channels) do
-        {:ok, ids} -> ids
-        :error -> throw(:permission_unavailable)
-      end
+      current = Map.get(allowed, guild_id, MapSet.new())
+      Enum.filter(channels, &MapSet.member?(current, &1))
     end
 
     updates =
@@ -367,7 +380,16 @@ defmodule DiscordyGateway.Application.Session do
         visible
       )
 
-    changes = PassiveUpdates.changed(updates, state.passive_sent)
+    sent =
+      state.passive_sent
+      |> PassiveUpdates.filter_visible(visible)
+      |> PassiveUpdates.filter_read_states(
+        state.channel_guilds,
+        state.private_channel_ids,
+        visible
+      )
+
+    changes = PassiveUpdates.changed(updates, sent)
     payload = PassiveUpdates.payload(changes)
 
     state =
@@ -379,7 +401,7 @@ defmodule DiscordyGateway.Application.Session do
      %{
        state
        | passive_updates: %PassiveUpdates{},
-         passive_sent: PassiveUpdates.merge(state.passive_sent, changes)
+         passive_sent: PassiveUpdates.merge(sent, changes)
      }}
   catch
     :permission_unavailable -> :error
@@ -1017,13 +1039,37 @@ defmodule DiscordyGateway.Application.Session do
 
   defp forget_guild(state, guild_id) do
     state = drop_guild_monitor(state, guild_id)
+    channel_ids = for {id, guild} <- state.channel_guilds, guild == guild_id, do: id
 
     %{
       state
       | guild_ids: MapSet.delete(state.guild_ids, guild_id),
-        refreshing_guilds: MapSet.delete(state.refreshing_guilds, guild_id)
+        refreshing_guilds: MapSet.delete(state.refreshing_guilds, guild_id),
+        channel_guilds: Map.drop(state.channel_guilds, channel_ids),
+        passive_updates:
+          PassiveUpdates.forget_guild(state.passive_updates, guild_id, channel_ids),
+        passive_sent: PassiveUpdates.forget_guild(state.passive_sent, guild_id, channel_ids)
     }
   end
+
+  defp forget_deleted_channel(state, guild_id, event, encoded)
+       when event in ~w(CHANNEL_DELETE THREAD_DELETE) do
+    case Jason.decode!(encoded) do
+      %{"id" => channel_id} ->
+        %{
+          state
+          | channel_guilds: Map.delete(state.channel_guilds, channel_id),
+            passive_updates:
+              PassiveUpdates.forget_channel(state.passive_updates, guild_id, channel_id),
+            passive_sent: PassiveUpdates.forget_channel(state.passive_sent, guild_id, channel_id)
+        }
+
+      _ ->
+        state
+    end
+  end
+
+  defp forget_deleted_channel(state, _guild_id, _event, _encoded), do: state
 
   defp drop_guild_monitor(state, guild_id) do
     {matching, others} = Enum.split_with(state.guild_refs, fn {_ref, id} -> id == guild_id end)

@@ -55,7 +55,11 @@ snapshot and refreshes guild snapshots before resuming guild event delivery.
 A session that has used passive mode must IDENTIFY again after disconnect; it
 cannot replay stale passive frames through RESUME. Missing or lost read-state
 certification causes a retryable close. These options require a compatible
-client and remain opt-in.
+client and remain opt-in. Buffered and delivered channel/read state is removed
+when the session leaves a guild or loses a channel/thread; departed voice
+sessions are removed after their final update. The remaining baseline scales
+with visible channels, read states and live voice sessions; it has no fixed
+entry cap. Each nonempty permission batch uses at most one guild call per flush.
 
 ## Multiple gateway replicas
 

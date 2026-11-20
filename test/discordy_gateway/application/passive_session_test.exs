@@ -4,6 +4,19 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
   alias DiscordyGateway.Application.{Events.Ingest, Ports}
   alias DiscordyGateway.Fixtures
 
+  setup do
+    previous = Application.fetch_env!(:discordy_gateway, :settings)
+
+    settings =
+      previous
+      |> Keyword.put(:identify_timeout_ms, 5_000)
+      |> Keyword.put(:heartbeat_interval_ms, 60_000)
+
+    Application.put_env(:discordy_gateway, :settings, settings)
+    on_exit(fn -> Application.put_env(:discordy_gateway, :settings, previous) end)
+    :ok
+  end
+
   test "passive batches changed markers, then activation sends a fresh guild snapshot" do
     gid = unique_id()
     guild = Fixtures.guild_payload(gid)
@@ -54,7 +67,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
       "self_deaf" => false
     })
 
-    assert %{"channel_id" => "12"} = await(active, "VOICE_STATE_UPDATE")
+    assert %{"channel_id" => "12"} = await(active, "VOICE_STATE_UPDATE", 2_000)
 
     read = %{
       "channel_id" => "10",
@@ -214,8 +227,11 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     publish_membership(gid, 3, ["2"])
     publish_membership(gid, 2, ["2", "3"])
     :sys.get_state(guild_pid)
-    token = :sys.get_state(client.session).passive_token
-    send(client.session, {:passive_flush, token})
+    state = :sys.get_state(client.session)
+    refute Map.has_key?(state.channel_guilds, "21")
+    refute Map.has_key?(state.passive_updates.channels, {gid, "21"})
+    refute Map.has_key?(state.passive_sent.channels, {gid, "21"})
+    send(client.session, {:passive_flush, state.passive_token})
     assert await(client, "PASSIVE_UPDATE_V2", 100) == :none
     assert await(client, "THREAD_DELETE", 100) == :none
 
@@ -338,6 +354,142 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     assert await(client, "GUILD_DELETE", 100) == :none
   end
 
+  test "leaving a guild clears pending and delivered state before the guild stops" do
+    gid = unique_id()
+    guild = Fixtures.guild_payload(gid)
+
+    ready = %{
+      "user" => %{"id" => "3"},
+      "guilds" => [guild],
+      "private_channels" => [],
+      "relationships" => [],
+      "user_settings" => %{}
+    }
+
+    Fakes.put({:guild, gid}, {:ok, guild})
+    Fakes.put({:ready, "3"}, {:ok, ready})
+    Fakes.put({:read_states, "3"}, {:ok, %{entries: [], versioned: true}})
+    client = tracked_client("leaving")
+    identify(client.session, "3", %{"passive" => true})
+    assert await(client, "READY")
+    :sys.get_state(client.session)
+    {:ok, guild_pid} = Ports.server_directory().lookup({:guild, gid})
+    :sys.get_state(guild_pid)
+    publish(gid, 31, %{"id" => "1031", "channel_id" => "10"})
+    :sys.get_state(guild_pid)
+    token = :sys.get_state(client.session).passive_token
+    send(client.session, {:passive_flush, token})
+    assert %{"channels" => [_]} = await(client, "PASSIVE_UPDATE_V2")
+
+    publish(gid, 32, %{"id" => "1032", "channel_id" => "10"})
+    :sys.get_state(guild_pid)
+    :sys.get_state(client.session)
+
+    read = %{
+      "channel_id" => "10",
+      "last_message_id" => "1031",
+      "mention_count" => 1,
+      "read_state_version" => "1"
+    }
+
+    Ingest.handle(
+      :message,
+      Jason.encode!(%{
+        "id" => "leave-read-#{gid}",
+        "type" => "READ_STATE_UPDATE",
+        "target_user_ids" => ["3"],
+        "data" => read
+      })
+    )
+
+    :sys.get_state(client.session)
+
+    Ingest.handle(
+      :user,
+      Jason.encode!(%{
+        "id" => "leave-guild-#{gid}",
+        "type" => "GUILD_DELETE",
+        "target_user_ids" => ["3"],
+        "data" => %{"id" => gid}
+      })
+    )
+
+    assert %{"id" => ^gid} = await(client, "GUILD_DELETE")
+    state = :sys.get_state(client.session)
+    refute Map.has_key?(state.channel_guilds, "10")
+    assert state.passive_updates.channels == %{}
+    assert state.passive_updates.read_states == %{}
+    assert state.passive_sent.channels == %{}
+    :sys.get_state(guild_pid)
+    GenServer.stop(guild_pid)
+    send(client.session, {:passive_flush, state.passive_token})
+    assert await(client, "PASSIVE_UPDATE_V2", 100) == :none
+    send_frame(client.session, 1, nil)
+    assert %{"op" => 11} = await_op(client, 11)
+  end
+
+  test "deleting a channel discards buffered markers and read state" do
+    gid = unique_id()
+    guild = Fixtures.guild_payload(gid)
+
+    ready = %{
+      "user" => %{"id" => "3"},
+      "guilds" => [guild],
+      "private_channels" => [],
+      "relationships" => [],
+      "user_settings" => %{}
+    }
+
+    Fakes.put({:guild, gid}, {:ok, guild})
+    Fakes.put({:ready, "3"}, {:ok, ready})
+    Fakes.put({:read_states, "3"}, {:ok, %{entries: [], versioned: true}})
+    client = tracked_client("channel-delete")
+    identify(client.session, "3", %{"passive" => true})
+    assert await(client, "READY")
+    :sys.get_state(client.session)
+    {:ok, guild_pid} = Ports.server_directory().lookup({:guild, gid})
+    :sys.get_state(guild_pid)
+    publish(gid, 41, %{"id" => "1041", "channel_id" => "10"})
+    :sys.get_state(guild_pid)
+    :sys.get_state(client.session)
+
+    read = %{
+      "channel_id" => "10",
+      "last_message_id" => "1040",
+      "mention_count" => 1,
+      "read_state_version" => "1"
+    }
+
+    Ingest.handle(
+      :message,
+      Jason.encode!(%{
+        "id" => "delete-read-#{gid}",
+        "type" => "READ_STATE_UPDATE",
+        "target_user_ids" => ["3"],
+        "data" => read
+      })
+    )
+
+    :sys.get_state(client.session)
+
+    event = %{
+      "id" => "delete-channel-#{gid}",
+      "type" => "CHANNEL_DELETE",
+      "guild_id" => gid,
+      "channel_id" => "10",
+      "data" => %{"id" => "10", "guild_id" => gid, "type" => 0}
+    }
+
+    Ingest.handle(:guild, Jason.encode!(event))
+    :sys.get_state(guild_pid)
+    state = :sys.get_state(client.session)
+    refute Map.has_key?(state.channel_guilds, "10")
+    assert state.passive_updates.channels == %{}
+    assert state.passive_updates.read_states == %{}
+    send(client.session, {:passive_flush, state.passive_token})
+    assert await(client, "PASSIVE_UPDATE_V2", 100) == :none
+  end
+
   test "passive sessions require certified reads and cannot replay after reconnect" do
     {legacy, _} = connect()
     identify(legacy, "1", %{"passive" => true})
@@ -346,7 +498,7 @@ defmodule DiscordyGateway.Application.PassiveSessionTest do
     Fakes.put({:read_states, "1"}, {:ok, %{entries: [], versioned: true}})
     {session, _} = connect()
     identify(session, "1", %{"passive" => true})
-    %{"d" => %{"session_id" => session_id}} = next_dispatch("READY")
+    %{"d" => %{"session_id" => session_id}} = next_dispatch("READY", 2_000)
     {stub, _} = connect()
     send_frame(stub, 6, %{"token" => "user-1", "session_id" => session_id, "seq" => 1})
     assert %{"op" => 9, "d" => false} = next_frame()

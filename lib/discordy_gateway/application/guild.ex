@@ -114,8 +114,14 @@ defmodule DiscordyGateway.Application.Guild do
     visible =
       case Map.fetch(state.subs, pid) do
         {:ok, %{sub: sub}} ->
-          current = visible_channel_ids(state.cache, sub.user_id, System.os_time(:millisecond))
-          Enum.filter(channel_ids, &MapSet.member?(current, &1))
+          now = System.os_time(:millisecond)
+
+          Enum.filter(channel_ids, fn id ->
+            Permissions.has?(
+              GuildState.channel_permissions(state.cache, sub.user_id, id, now),
+              :view_channel
+            )
+          end)
 
         :error ->
           []

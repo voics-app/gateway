@@ -66,6 +66,21 @@ defmodule DiscordyGateway.Domain.Session.PassiveUpdates do
 
   def voice_state(state, _payload, _gate), do: state
 
+  @doc "Lists guild/channel pairs whose current permissions are needed."
+  @spec permission_pairs(t(), map()) :: [{String.t(), String.t()}]
+  def permission_pairs(state, channel_guilds) do
+    channels = Enum.map(state.channels, fn {{guild, channel}, _} -> {guild, channel} end)
+    voice = Enum.map(state.voice_gates, fn {{guild, _, _}, channel} -> {guild, channel} end)
+
+    reads =
+      for channel <- Map.keys(state.read_states),
+          guild = Map.get(channel_guilds, channel),
+          is_binary(guild),
+          do: {guild, channel}
+
+    Enum.filter(channels ++ voice ++ reads, fn {_guild, channel} -> is_binary(channel) end)
+  end
+
   @doc "Rechecks every guild-scoped channel against current permissions."
   @spec filter_visible(t(), (String.t(), [String.t()] -> [String.t()])) :: t()
   def filter_visible(state, visible) do
@@ -90,7 +105,12 @@ defmodule DiscordyGateway.Domain.Session.PassiveUpdates do
         {guild, Map.get(state.voice_gates, key)} in allowed
       end)
 
-    %{state | channels: channels, voice_states: voice}
+    %{
+      state
+      | channels: channels,
+        voice_states: voice,
+        voice_gates: Map.take(state.voice_gates, Map.keys(voice))
+    }
   end
 
   @doc "Restricts read-state updates to known private channels or currently visible guild channels."
@@ -130,19 +150,63 @@ defmodule DiscordyGateway.Domain.Session.PassiveUpdates do
       end)
 
     voice =
-      Map.filter(state.voice_states, fn {key, value} -> delivered.voice_states[key] != value end)
+      Map.filter(state.voice_states, fn {key, value} ->
+        previous = delivered.voice_states[key]
+        if is_nil(value["channel_id"]), do: previous != nil, else: previous != value
+      end)
 
     %{state | channels: channels, read_states: reads, voice_states: voice}
   end
 
-  @doc "Remembers the values sent in a delta."
+  @doc "Remembers live values sent in a delta and discards completed voice sessions."
   @spec merge(t(), t()) :: t()
   def merge(delivered, changes) do
+    {left, live} =
+      Enum.split_with(changes.voice_states, fn {_key, value} -> is_nil(value["channel_id"]) end)
+
+    left_keys = Enum.map(left, &elem(&1, 0))
+    live = Map.new(live)
+
     %{
       delivered
       | channels: Map.merge(delivered.channels, changes.channels),
         read_states: Map.merge(delivered.read_states, changes.read_states),
-        voice_states: Map.merge(delivered.voice_states, changes.voice_states)
+        voice_states: delivered.voice_states |> Map.drop(left_keys) |> Map.merge(live),
+        voice_gates:
+          delivered.voice_gates
+          |> Map.drop(left_keys)
+          |> Map.merge(Map.take(changes.voice_gates, Map.keys(live)))
+    }
+  end
+
+  @doc "Forgets buffered and delivered data for a channel and its voice sessions."
+  @spec forget_channel(t(), String.t(), String.t()) :: t()
+  def forget_channel(state, guild_id, channel_id) do
+    voice_keys =
+      for {{guild, _, _} = key, gate} <- state.voice_gates,
+          guild == guild_id and gate == channel_id,
+          do: key
+
+    %{
+      state
+      | channels: Map.delete(state.channels, {guild_id, channel_id}),
+        read_states: Map.delete(state.read_states, channel_id),
+        voice_states: Map.drop(state.voice_states, voice_keys),
+        voice_gates: Map.drop(state.voice_gates, voice_keys)
+    }
+  end
+
+  @doc "Forgets all guild data and associated user read states."
+  @spec forget_guild(t(), String.t(), [String.t()]) :: t()
+  def forget_guild(state, guild_id, channel_ids) do
+    voice_keys = for {{guild, _, _} = key, _} <- state.voice_states, guild == guild_id, do: key
+
+    %{
+      state
+      | channels: Map.reject(state.channels, fn {{guild, _}, _} -> guild == guild_id end),
+        read_states: Map.drop(state.read_states, channel_ids),
+        voice_states: Map.drop(state.voice_states, voice_keys),
+        voice_gates: Map.drop(state.voice_gates, voice_keys)
     }
   end
 
