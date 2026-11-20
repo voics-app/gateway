@@ -18,8 +18,9 @@ defmodule DiscordyGateway.Domain.Voice.CapabilitiesTest do
 
     assert Enum.all?(Map.values(Capabilities.permissions(all, true)), &(&1 == false))
     no_speak = permission([:view_channel, :connect, :stream, :use_soundboard])
+    assert Capabilities.permissions(no_speak, false)["can_publish_audio"]
     assert Capabilities.permissions(no_speak, false)["can_publish_video"]
-    refute Capabilities.permissions(no_speak, false)["can_publish_soundboard"]
+    assert Capabilities.permissions(no_speak, false)["can_publish_soundboard"]
 
     refute Capabilities.permissions(permission([:view_channel, :stream]), false)[
              "can_publish_video"

@@ -187,7 +187,10 @@ defmodule DiscordyGateway.Application.Voice.CapabilitySession do
     case result do
       {:ok, ^update} ->
         case Capabilities.acknowledge(state.policy, command, System.system_time(:millisecond)) do
-          {:ok, policy} -> {:noreply, schedule(%{state | policy: policy}, @renew_ms)}
+          {:ok, policy} ->
+            send(state.owner, {:voice_capability_applied, state.session_id, update})
+            {:noreply, schedule(%{state | policy: policy}, @renew_ms)}
+
           {:error, reason, _policy, :disconnect} -> fail(state, reason)
         end
 

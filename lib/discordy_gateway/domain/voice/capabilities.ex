@@ -27,7 +27,9 @@ defmodule DiscordyGateway.Domain.Voice.Capabilities do
   @spec permissions(non_neg_integer(), boolean()) :: map()
   def permissions(perms, suppressed?) do
     connected? = Permissions.has?(perms, :view_channel) and Permissions.has?(perms, :connect)
-    audio? = connected? and not suppressed? and Permissions.has?(perms, :speak)
+    # In a stage the server-controlled `suppress` bit is the speaker grant. Requiring the static
+    # SPEAK overwrite as well would make moderator promotion a no-op for the ordinary audience.
+    audio? = connected? and not suppressed?
     video? = connected? and not suppressed? and Permissions.has?(perms, :stream)
     soundboard? = audio? and Permissions.has?(perms, :use_soundboard)
 

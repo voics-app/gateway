@@ -40,6 +40,16 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
     end
   end
 
+  defp await_capability_after(guild, channel, user, revision, attempts \\ 100) do
+    case DiscordyGateway.Application.Guild.publish_permissions(guild, channel, user) do
+      {:ok, %{"revision" => current} = grant} when current > revision -> grant
+      _ when attempts > 0 ->
+        Process.sleep(20)
+        await_capability_after(guild, channel, user, revision, attempts - 1)
+      _ -> flunk("capability revision did not advance")
+    end
+  end
+
   defp setup_guild(gid) do
     payload = Fixtures.guild_payload(gid)
 
@@ -378,6 +388,37 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
       assert grant["can_publish_video"] == false
       assert grant["can_publish_soundboard"] == false
       assert grant["expires_at"] > System.os_time(:millisecond)
+
+      send_frame(alice.session, 4, %{
+        "guild_id" => "stage-guarded",
+        "channel_id" => "14",
+        "self_mute" => true,
+        "self_deaf" => false,
+        "request_to_speak_timestamp" => "2026-11-20T01:00:00Z"
+      })
+
+      assert %{
+               "user_id" => "2",
+               "suppress" => true,
+               "request_to_speak_timestamp" => "2026-11-20T01:00:00Z"
+             } = await(alice, "VOICE_STATE_UPDATE")
+
+      publish(
+        :guild,
+        "VOICE_MEMBER_MOVE",
+        %{"guild_id" => "stage-guarded", "user_id" => "2", "suppress" => false},
+        %{"guild_id" => "stage-guarded"}
+      )
+
+      assert %{
+               "user_id" => "2",
+               "suppress" => false,
+               "request_to_speak_timestamp" => nil
+             } = await(alice, "VOICE_STATE_UPDATE")
+
+      promoted = await_capability_after("stage-guarded", "14", "2", grant["revision"])
+      assert promoted["can_publish_audio"] == true
+      assert promoted["revision"] > grant["revision"]
       path = "/internal/v1/voice/guilds/stage-guarded/channels/14/members/2/publish-permissions"
 
       request =
@@ -388,7 +429,7 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
         DiscordyGateway.Interface.Router.call(request, DiscordyGateway.Interface.Router.init([]))
 
       assert response.status == 200
-      assert Jason.decode!(response.resp_body) == grant
+      assert Jason.decode!(response.resp_body) == promoted
 
       assert DiscordyGateway.Interface.Router.call(
                Plug.Test.conn(:get, path),
@@ -397,6 +438,17 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
 
       assert :unavailable =
                DiscordyGateway.Application.Guild.publish_permissions("stage-guarded", "14", "3")
+
+      publish(
+        :guild,
+        "VOICE_MEMBER_MOVE",
+        %{"guild_id" => "stage-guarded", "user_id" => "2", "suppress" => true},
+        %{"guild_id" => "stage-guarded"}
+      )
+
+      assert %{"user_id" => "2", "suppress" => true} = await(alice, "VOICE_STATE_UPDATE")
+      revoked = await_capability_after("stage-guarded", "14", "2", promoted["revision"])
+      assert revoked["can_publish_audio"] == false
 
       leave(alice, "stage-guarded")
       await_left(alice)
