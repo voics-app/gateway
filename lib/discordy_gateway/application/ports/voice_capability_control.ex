@@ -4,7 +4,6 @@ defmodule DiscordyGateway.Application.Ports.VoiceCapabilityControl do
   and return only after the SFU has applied the entire command. This port is not yet wired.
   """
 
-  @callback apply(node_id :: String.t(), registration_lease :: pos_integer(), command :: map()) ::
+  @callback apply(node :: map(), session_id :: String.t(), update :: map()) ::
               {:ok, map()} | {:error, term()}
 end
-
