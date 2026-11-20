@@ -27,6 +27,20 @@ defmodule DiscordyGateway.Infrastructure.ApiClientTest do
     assert {:ok, %{"user" => %{"id" => "42"}}} = ApiClient.fetch_ready("42")
   end
 
+  test "sends an authenticated checkpoint and accepts an empty success" do
+    checkpoint = %{"guild_id" => "123", "connected" => true}
+
+    Req.Test.stub(__MODULE__, fn conn ->
+      assert conn.request_path == "/internal/v1/voice/activity-checkpoints"
+      assert Plug.Conn.get_req_header(conn, "x-internal-token") == ["test-internal-token"]
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      assert Jason.decode!(body) == checkpoint
+      Plug.Conn.send_resp(conn, 204, "")
+    end)
+
+    assert :ok = ApiClient.voice_activity_checkpoint(checkpoint)
+  end
+
   test "maps HTTP statuses to errors" do
     for {status, expected} <- [
           {401, :unauthorized},
