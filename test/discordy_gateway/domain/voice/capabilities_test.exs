@@ -54,4 +54,3 @@ defmodule DiscordyGateway.Domain.Voice.CapabilitiesTest do
     assert {%{pending: nil, applied: nil}, :disconnect} = Capabilities.fail(next)
   end
 end
-

@@ -248,4 +248,3 @@ defmodule DiscordyGateway.Application.Voice.CapabilitySession do
 
   def terminate(_reason, _state), do: :ok
 end
-

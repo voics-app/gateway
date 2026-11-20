@@ -131,4 +131,3 @@ defmodule DiscordyGateway.Application.Voice.CapabilitySessionTest do
     assert_receive {:DOWN, ^monitor, :process, ^worker, :killed}
   end
 end
-
