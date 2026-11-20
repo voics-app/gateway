@@ -144,7 +144,13 @@ defmodule DiscordyGateway.Case do
   def voice_node(id, attrs \\ []) do
     struct!(
       VoiceNode,
-      [node_id: id, region: "nl-home", ws_url: "ws://#{id}.test", users: 0] ++ attrs
+      [
+        node_id: id,
+        region: "nl-home",
+        ws_url: "ws://#{id}.test",
+        users: 0,
+        control_endpoint: %{ip: "10.42.0.8", port: 4100, lease: "1"}
+      ] ++ attrs
     )
   end
 

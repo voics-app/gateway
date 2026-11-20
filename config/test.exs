@@ -5,6 +5,7 @@ config :logger, level: :warning
 config :opentelemetry, traces_exporter: :none
 
 config :discordy_gateway, :infrastructure, false
+config :discordy_gateway, :voice_capability_control, DiscordyGateway.Fakes.VoiceCapabilityControl
 config :discordy_gateway, DiscordyGateway.Interface.Endpoint, server: false, http: [port: 0]
 
 config :discordy_gateway, :ports,
