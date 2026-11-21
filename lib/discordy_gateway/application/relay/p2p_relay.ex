@@ -6,6 +6,7 @@ defmodule DiscordyGateway.Application.Relay.P2pRelay do
   """
 
   alias DiscordyGateway.Application.{Dispatch, Ports}
+  alias DiscordyGateway.Application.Relay.SendAccess
   alias DiscordyGateway.Application.Session.Identity
   alias DiscordyGateway.Domain.Relay.P2pSignal
 
@@ -21,7 +22,8 @@ defmodule DiscordyGateway.Application.Relay.P2pRelay do
 
   defp authorize(identity, signal) do
     with {:ok, access} <-
-           Ports.api_client().fetch_channel_access(signal.channel_id, identity.user_id) do
+           Ports.api_client().fetch_channel_access(signal.channel_id, identity.user_id),
+         :ok <- SendAccess.authorize(access) do
       sender = %{user_id: identity.user_id, device_id: identity.device_id}
 
       P2pSignal.authorize(
