@@ -4,8 +4,8 @@ defmodule DiscordyGateway.Domain.IntentsTest do
 
   alias DiscordyGateway.Domain.Intents
 
-  test "all/0 covers the seventeen supported Discord intent bits" do
-    assert Intents.all() == (1 <<< 17) - 1
+  test "all/0 covers the defined Discord intent bits" do
+    assert Intents.all() == ((1 <<< 17) - 1 ||| 1 <<< 24 ||| 1 <<< 25)
   end
 
   describe "validate/1" do
@@ -83,6 +83,18 @@ defmodule DiscordyGateway.Domain.IntentsTest do
     assert Intents.allows?(1 <<< 9, "MESSAGE_CREATE", :guild)
     refute Intents.allows?(1 <<< 0, "MESSAGE_CREATE", :guild)
     assert Intents.allows?(0, "INTERACTION_CREATE", :direct)
+  end
+
+  test "poll votes require the scope-specific poll intent" do
+    for event <- ~w(MESSAGE_POLL_VOTE_ADD MESSAGE_POLL_VOTE_REMOVE) do
+      assert Intents.validate(1 <<< 24 ||| 1 <<< 25) == :ok
+      assert Intents.allows?(1 <<< 24, event, :guild)
+      refute Intents.allows?(1 <<< 25, event, :guild)
+      assert Intents.allows?(1 <<< 25, event, :direct)
+      refute Intents.allows?(1 <<< 24, event, :direct)
+      refute Intents.allows?(0, event, :guild)
+      refute Intents.allows?(0, event, :direct)
+    end
   end
 
   test "has?/2 tests a named intent" do

@@ -26,7 +26,8 @@ defmodule DiscordyGateway.Domain.Intents do
     guild_message_typing: ~w(TYPING_START),
     guild_scheduled_events:
       ~w(GUILD_SCHEDULED_EVENT_CREATE GUILD_SCHEDULED_EVENT_UPDATE GUILD_SCHEDULED_EVENT_DELETE
-         GUILD_SCHEDULED_EVENT_USER_ADD GUILD_SCHEDULED_EVENT_USER_REMOVE)
+         GUILD_SCHEDULED_EVENT_USER_ADD GUILD_SCHEDULED_EVENT_USER_REMOVE),
+    guild_message_polls: ~w(MESSAGE_POLL_VOTE_ADD MESSAGE_POLL_VOTE_REMOVE)
   }
 
   @direct_events %{
@@ -34,7 +35,8 @@ defmodule DiscordyGateway.Domain.Intents do
                         CHANNEL_PINS_UPDATE),
     direct_message_reactions:
       ~w(MESSAGE_REACTION_ADD MESSAGE_REACTION_REMOVE MESSAGE_REACTION_REMOVE_ALL),
-    direct_message_typing: ~w(TYPING_START)
+    direct_message_typing: ~w(TYPING_START),
+    direct_message_polls: ~w(MESSAGE_POLL_VOTE_ADD MESSAGE_POLL_VOTE_REMOVE)
   }
 
   @guild_requirements for {intent, events} <- @guild_events,
