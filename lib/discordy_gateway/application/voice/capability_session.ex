@@ -167,20 +167,18 @@ defmodule DiscordyGateway.Application.Voice.CapabilitySession do
   end
 
   defp control_result(state, update) do
-    try do
-      with true <- current_node?(state),
-           {:ok, ^update} <- state.control.apply(state.node, state.session_id, update),
-           true <- current_node?(state) do
-        {:ok, update}
-      else
-        false -> {:error, :node_changed}
-        other -> other
-      end
-    rescue
-      _error -> {:error, :control_exception}
-    catch
-      _kind, _reason -> {:error, :control_exception}
+    with true <- current_node?(state),
+         {:ok, ^update} <- state.control.apply(state.node, state.session_id, update),
+         true <- current_node?(state) do
+      {:ok, update}
+    else
+      false -> {:error, :node_changed}
+      other -> other
     end
+  rescue
+    _error -> {:error, :control_exception}
+  catch
+    _kind, _reason -> {:error, :control_exception}
   end
 
   defp handle_result(state, command, update, result) do
