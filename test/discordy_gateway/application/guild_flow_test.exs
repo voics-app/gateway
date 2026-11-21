@@ -128,6 +128,57 @@ defmodule DiscordyGateway.Application.GuildFlowTest do
   end
 
   describe "event fan-out" do
+    test "membership changes grant and revoke private thread visibility" do
+      gid = "thread-members"
+
+      payload =
+        guild_with_bot(gid)
+        |> Map.put("threads", [
+          %{"id" => "21", "type" => 12, "parent_id" => "10", "owner_id" => "2"}
+        ])
+        |> Map.put("thread_members", %{"21" => %{"version" => 1, "user_ids" => ["2"]}})
+
+      Fakes.put({:guild, gid}, {:ok, payload})
+      for user <- ~w(2 3), do: Fakes.put({:ready, user}, ready_for(user, [payload]))
+      owner = online_in(gid, "2")
+      member = online_in(gid, "3")
+
+      publish(
+        :guild,
+        "THREAD_MEMBERS_UPDATE",
+        %{
+          "id" => "21",
+          "guild_id" => gid,
+          "added_members" => [%{"user_id" => "3"}],
+          "removed_member_ids" => [],
+          "_membership_version" => 2,
+          "_member_ids" => ["2", "3"]
+        },
+        %{"guild_id" => gid, "channel_id" => "21"}
+      )
+
+      assert %{"id" => "21"} = await(member, "THREAD_CREATE")
+      assert %{"id" => "21"} = public_update = await(owner, "THREAD_MEMBERS_UPDATE")
+      refute Map.has_key?(public_update, "_member_ids")
+      refute Map.has_key?(public_update, "_membership_version")
+
+      publish(
+        :guild,
+        "THREAD_MEMBERS_UPDATE",
+        %{
+          "id" => "21",
+          "guild_id" => gid,
+          "added_members" => [],
+          "removed_member_ids" => ["3"],
+          "_membership_version" => 3,
+          "_member_ids" => ["2"]
+        },
+        %{"guild_id" => gid, "channel_id" => "21"}
+      )
+
+      assert %{"id" => "21"} = await(member, "THREAD_DELETE")
+    end
+
     test "delivers channel events only to members who can view the channel" do
       setup_guild("g10")
       staff = online_in("g10", "2")

@@ -40,6 +40,56 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
   end
 
   describe "channel_permissions/4" do
+    test "private thread membership is restored and updated without exposing the internal map" do
+      payload =
+        Fixtures.guild_payload()
+        |> Map.put("threads", [
+          %{"id" => "21", "type" => 12, "parent_id" => "10", "owner_id" => "2"}
+        ])
+        |> Map.put("thread_members", %{"21" => %{"version" => 2, "user_ids" => ["3"]}})
+
+      state = GuildState.from_payload(payload)
+      assert (GuildState.channel_permissions(state, "3", "21", 0) &&& @view) != 0
+      refute Map.has_key?(GuildState.snapshot(state), "thread_members")
+
+      state =
+        GuildState.apply_event(state, "THREAD_MEMBERS_UPDATE", %{
+          "id" => "21",
+          "_membership_version" => 3,
+          "_member_ids" => []
+        })
+
+      assert GuildState.channel_permissions(state, "3", "21", 0) == 0
+
+      stale =
+        GuildState.apply_event(state, "THREAD_MEMBERS_UPDATE", %{
+          "id" => "21",
+          "_membership_version" => 2,
+          "_member_ids" => ["3"]
+        })
+
+      assert stale == state
+
+      for invalid <- [
+            %{"id" => "21"},
+            %{"id" => "21", "_membership_version" => "4", "_member_ids" => []},
+            %{"id" => "21", "_membership_version" => -1, "_member_ids" => []},
+            %{"id" => "21", "_membership_version" => 4, "_member_ids" => nil},
+            %{"id" => "21", "_membership_version" => 4, "_member_ids" => [123]}
+          ] do
+        assert GuildState.apply_event(state, "THREAD_MEMBERS_UPDATE", invalid) == state
+      end
+
+      state =
+        GuildState.apply_event(state, "THREAD_MEMBERS_UPDATE", %{
+          "id" => "21",
+          "_membership_version" => 4,
+          "_member_ids" => ["3"]
+        })
+
+      assert (GuildState.channel_permissions(state, "3", "21", 0) &&& @view) != 0
+    end
+
     test "everyone sees general", %{state: state} do
       assert (GuildState.channel_permissions(state, "3", "10", 0) &&& @view) != 0
     end

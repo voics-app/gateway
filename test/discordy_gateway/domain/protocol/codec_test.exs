@@ -54,6 +54,7 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
       assert identify.intents == 513
       assert identify.properties == %{os: "windows", client: "discordy", version: "0.1.0"}
       assert identify.presence == nil
+      assert identify.passive == false
     end
 
     test "decodes an optional initial presence" do
@@ -62,6 +63,13 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
 
       assert {:ok, {:identify, identify}} = Codec.decode_inbound(frame(2, payload))
       assert identify.presence == %{status: "dnd", activities: [], afk: false, background: false}
+    end
+
+    test "validates optional passive mode" do
+      assert {:ok, {:identify, %{passive: true}}} =
+               Codec.decode_inbound(frame(2, Map.put(@identify, "passive", true)))
+
+      assert Codec.decode_inbound(frame(2, Map.put(@identify, "passive", nil))) == {:error, 4002}
     end
 
     test "rejects a missing token" do
@@ -92,6 +100,17 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
       assert Codec.decode_inbound(frame(3, %{"status" => "away", "activities" => []})) ==
                {:error, 4002}
     end
+  end
+
+  test "session mode requires a boolean" do
+    assert {:ok, {:session_mode, %{passive: true}}} =
+             Codec.decode_inbound(frame(27, %{"passive" => true}))
+
+    assert {:ok, {:session_mode, %{passive: false}}} =
+             Codec.decode_inbound(frame(27, %{"passive" => false}))
+
+    assert Codec.decode_inbound(frame(27, %{})) == {:error, 4002}
+    assert Codec.decode_inbound(frame(27, %{"passive" => nil})) == {:error, 4002}
   end
 
   test "decodes call ring with unique targets and rejects empty or oversized lists" do

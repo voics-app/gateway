@@ -12,7 +12,9 @@ defmodule DiscordyGateway.Application.Relay.SendAccess do
         do: :send_messages_in_threads,
         else: :send_messages
 
-    if Permissions.has?(permissions, :view_channel) and
+    unlocked = access["channel_type"] not in [10, 11, 12] or access["thread_locked"] == false
+
+    if unlocked and Permissions.has?(permissions, :view_channel) and
          Permissions.has?(permissions, send_permission),
        do: :ok,
        else: {:error, :missing_permissions}

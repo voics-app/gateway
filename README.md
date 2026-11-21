@@ -22,7 +22,11 @@ sessions and resume buffers so a fresh READY starts the restored version history
 | Area | Behaviour |
 |---|---|
 | Sessions | HELLO, IDENTIFY (EdDSA user JWT, or bot token via api introspection), READY from the api, heartbeat supervision, 120 sends / 60 s rate limit (close 4008), RESUME from the Valkey buffer within 120 s |
-| Guild processes | One cluster-wide process per guild (Horde), loaded lazily from `/guilds/{id}/state`, kept current from `discordy.guild.v1`; fan-out filtered by membership, intents and VIEW_CHANNEL with the Discord permission algorithm. Private threads are visible to their creator and members with MANAGE_THREADS, matching the current API policy. |
+| Guild processes | One cluster-wide process per guild (Horde), loaded lazily from `/guilds/{id}/state`, kept current from `discordy.guild.v1`; fan-out filtered by membership, intents and VIEW_CHANNEL with the Discord permission algorithm. Private threads are visible to their creator, thread members and members with MANAGE_THREADS. |
+
+Private thread membership is received from the internal guild seed and versioned membership events.
+Internal membership lists are removed before client dispatch. Deploy gateway support before the
+API starts sending those fields; older gateways can expose unknown guild-seed fields to clients.
 | Event consumers | One brod consumer group per topic (`discordy-gateway.<topic>`), P6 routing, idempotent on envelope `id` (LRU of the last 10k ids per node) |
 | Presence | Aggregated across a user's sessions (dnd > online > idle, invisible reads as offline), fanned out to guilds and friends; a friendship formed after READY (RELATIONSHIP_ADD, type 1) immediately hands both sides each other's current presence and tracks later changes. Client activities are sanitised (max 5, one custom status, text fields 128 characters, unknown fields dropped); an invalid activity closes the session with 4002 |
 | Voice | Least-loaded node of the region from etcd (P8), allocation in Valkey `voice:alloc:<id>`, one node per guild or DM call, reallocation when a node leaves etcd, `VOICE_SERVER_UPDATE` with an HS256 token, drain and undrain |
@@ -33,6 +37,29 @@ sessions and resume buffers so a fresh READY starts the restored version history
 HTTP endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics`, and (with `X-Internal-Token`)
 `GET /internal/v1/admin/stats`, `POST /internal/v1/voice/nodes/{id}/drain`,
 `POST /internal/v1/voice/nodes/{id}/undrain`.
+
+## Passive sessions (experimental)
+
+A certified read-state user can opt in with `passive: true` in IDENTIFY or send
+SESSION_MODE (op 27) with `{"passive": true}`. Every five seconds, when there
+are changes, PASSIVE_UPDATE_V2 coalesces channel latest-message markers, the
+user's versioned read states and guild voice changes. Guild channel and voice
+entries are rechecked against current view permission before delivery. Unread
+means the existing client count of unread channels, derived from message and
+read markers; it is not an exact count of unread messages. The current messages
+store does not roll the latest marker back on deletion, so this has the same
+limitation as the existing unread indicator.
+
+SESSION_MODE with `{"passive": false}` fetches a fresh certified read-state
+snapshot and refreshes guild snapshots before resuming guild event delivery.
+A session that has used passive mode must IDENTIFY again after disconnect; it
+cannot replay stale passive frames through RESUME. Missing or lost read-state
+certification causes a retryable close. These options require a compatible
+client and remain opt-in. Buffered and delivered channel/read state is removed
+when the session leaves a guild or loses a channel/thread; departed voice
+sessions are removed after their final update. The remaining baseline scales
+with visible channels, read states and live voice sessions; it has no fixed
+entry cap. Each nonempty permission batch uses at most one guild call per flush.
 
 ## Multiple gateway replicas
 
