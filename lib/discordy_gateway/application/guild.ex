@@ -51,8 +51,8 @@ defmodule DiscordyGateway.Application.Guild do
   def event(guild_id, %EventEnvelope{} = envelope),
     do: cast(guild_id, {:event, envelope, System.monotonic_time()})
 
-  @spec presence(String.t(), map()) :: :ok | :not_running
-  def presence(guild_id, payload), do: cast(guild_id, {:presence, payload})
+  @spec presence(String.t(), map(), boolean()) :: :ok | :not_running
+  def presence(guild_id, payload, afk), do: cast(guild_id, {:presence, payload, afk})
 
   @spec voice_state_update(String.t(), pid(), map()) :: :ok | :not_running
   def voice_state_update(guild_id, session_pid, request),
@@ -83,8 +83,16 @@ defmodule DiscordyGateway.Application.Guild do
     :ok = :pg.join(DiscordyGateway.Pg, :voice_servers, self())
     id = Keyword.fetch!(opts, :id)
 
-    {:ok, %{id: id, seed: opts[:seed], cache: nil, subs: %{}, room: Room.new(id, id), idle: nil},
-     {:continue, :load}}
+    {:ok,
+     %{
+       id: id,
+       seed: opts[:seed],
+       cache: nil,
+       subs: %{},
+       room: Room.new(id, id),
+       idle: nil,
+       afk_timers: %{}
+     }, {:continue, :load}}
   end
 
   @impl true
@@ -106,9 +114,11 @@ defmodule DiscordyGateway.Application.Guild do
     handle_event(envelope, state)
   end
 
-  def handle_cast({:presence, payload}, state) do
+  def handle_cast({:presence, payload, _afk}, state) do
     fanout(state, "PRESENCE_UPDATE", Map.put(payload, "guild_id", state.id), nil, state.cache)
-    {:noreply, state}
+    user_id = get_in(payload, ["user", "id"])
+    aggregate = Ports.presence_store().get_aggregates([user_id])[user_id]
+    {:noreply, update_afk_timer(state, user_id, aggregate && aggregate.afk)}
   end
 
   def handle_cast({:voice_state_update, pid, request}, state) do
@@ -125,7 +135,8 @@ defmodule DiscordyGateway.Application.Guild do
       Effects.run(effects, &broadcast_voice_state(state, &1, &2))
       {:noreply, %{state | room: room}}
     else
-      _ -> {:noreply, state}
+      _ ->
+        {:noreply, state}
     end
   end
 
@@ -146,6 +157,24 @@ defmodule DiscordyGateway.Application.Guild do
     do: {:stop, :normal, state}
 
   def handle_info(:idle_check, state), do: {:noreply, state}
+
+  def handle_info({:afk_timeout, user_id, token}, state) do
+    case state.afk_timers[user_id] do
+      %{token: ^token} ->
+        state = %{state | afk_timers: Map.delete(state.afk_timers, user_id)}
+        aggregate = Ports.presence_store().get_aggregates([user_id])[user_id]
+        target = state.cache.guild["afk_channel_id"]
+
+        if aggregate && aggregate.afk && afk_target?(state, user_id, target) do
+          {:noreply, move_member(state, user_id, target)}
+        else
+          {:noreply, state}
+        end
+
+      _ ->
+        {:noreply, state}
+    end
+  end
 
   def handle_info({:voice_node_gone, node_id}, state) do
     {room, effects} =
@@ -310,6 +339,17 @@ defmodule DiscordyGateway.Application.Guild do
     {:noreply, state}
   end
 
+  defp after_event(type, _data, state) when type in ["GUILD_UPDATE", "CHANNEL_DELETE"] do
+    users = state.room |> Room.voice_states() |> Enum.map(& &1.user_id)
+    aggregates = Ports.presence_store().get_aggregates(users)
+    state = Enum.reduce(Map.keys(state.afk_timers), state, &cancel_afk_timer(&2, &1))
+
+    {:noreply,
+     Enum.reduce(users, state, fn user, acc ->
+       update_afk_timer(acc, user, get_in(aggregates, [user, :afk]))
+     end)}
+  end
+
   defp after_event(_type, _data, state), do: {:noreply, state}
 
   defp fanout(state, event, data, channel_id, plan_cache) do
@@ -372,16 +412,33 @@ defmodule DiscordyGateway.Application.Guild do
     permissions = GuildState.channel_permissions(state.cache, sub.user_id, channel_id, now)
 
     if GuildState.voice_channel?(state.cache, channel_id) and
-         Permissions.has?(permissions, :connect) do
+         Permissions.has?(permissions, :connect) and
+         (not (request.self_video or request.self_stream) or
+            Permissions.has?(permissions, :stream)) do
       apply_voice(state, sub, request, join_opts(state, channel_id))
     else
       Dispatch.to_sessions(
         [sub.pid],
         "VOICE_STATE_UPDATE",
-        with_member(state, Room.rejected_payload(state.room, member, request))
+        with_member(state, rejected_voice_payload(state, member, request, permissions))
       )
 
       state
+    end
+  end
+
+  defp rejected_voice_payload(state, member, request, permissions) do
+    case VoiceStates.get(state.room.states, member.user_id) do
+      %{session_id: session_id} = current when session_id == member.session_id ->
+        if GuildState.voice_channel?(state.cache, request.channel_id) and
+             Permissions.has?(permissions, :connect) do
+          VoiceStates.to_payload(current, state.id)
+        else
+          Room.rejected_payload(state.room, member, request)
+        end
+
+      _ ->
+        Room.rejected_payload(state.room, member, request)
     end
   end
 
@@ -431,7 +488,47 @@ defmodule DiscordyGateway.Application.Guild do
   defp apply_voice(state, sub, request, opts) do
     {room, effects} = Room.update(state.room, member(sub), request, opts)
     Effects.run(effects, &broadcast_voice_state(state, &1, &2))
-    %{state | room: room}
+    state = %{state | room: room}
+    aggregate = Ports.presence_store().get_aggregates([sub.user_id])[sub.user_id]
+    update_afk_timer(state, sub.user_id, aggregate && aggregate.afk)
+  end
+
+  defp update_afk_timer(state, user_id, afk) do
+    target = state.cache.guild["afk_channel_id"]
+    timeout = state.cache.guild["afk_timeout"]
+
+    cond do
+      afk != true or not is_integer(timeout) or timeout <= 0 or
+          not afk_target?(state, user_id, target) ->
+        cancel_afk_timer(state, user_id)
+
+      Map.has_key?(state.afk_timers, user_id) ->
+        state
+
+      true ->
+        token = make_ref()
+        timer = Process.send_after(self(), {:afk_timeout, user_id, token}, timeout * 1000)
+        put_in(state.afk_timers[user_id], %{token: token, timer: timer})
+    end
+  end
+
+  defp afk_target?(state, user_id, target) do
+    is_binary(target) and GuildState.voice_channel?(state.cache, target) and
+      case VoiceStates.get(state.room.states, user_id) do
+        %{channel_id: channel_id} -> channel_id != target
+        _ -> false
+      end
+  end
+
+  defp cancel_afk_timer(state, user_id) do
+    case Map.pop(state.afk_timers, user_id) do
+      {nil, _} ->
+        state
+
+      {%{timer: timer}, remaining} ->
+        Process.cancel_timer(timer)
+        %{state | afk_timers: remaining}
+    end
   end
 
   defp remove_voice_session(state, nil), do: state
@@ -439,7 +536,11 @@ defmodule DiscordyGateway.Application.Guild do
   defp remove_voice_session(state, session_id) do
     {room, effects} = Room.remove_session(state.room, session_id)
     Effects.run(effects, &broadcast_voice_state(state, &1, &2))
-    %{state | room: room}
+    state = %{state | room: room}
+
+    Enum.reduce(Map.keys(state.afk_timers), state, fn user_id, acc ->
+      if VoiceStates.get(acc.room.states, user_id), do: acc, else: cancel_afk_timer(acc, user_id)
+    end)
   end
 
   defp broadcast_voice_state(state, payload, gate_channel_id),

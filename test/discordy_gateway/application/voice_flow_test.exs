@@ -178,6 +178,111 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
     assert %{"channel_id" => nil} = await(alice, "VOICE_STATE_UPDATE")
   end
 
+  test "STREAM permission gates camera and screen state without disconnecting an existing caller" do
+    setup_guild("stream-permissions")
+    Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+    bob = online_in("stream-permissions", "3")
+    owner = online_in("stream-permissions", "1")
+    join(bob, "stream-permissions", "12")
+    await(bob, "VOICE_SERVER_UPDATE")
+    await_in(bob, "12")
+    await_in(owner, "12")
+
+    for flag <- ["self_video", "self_stream"] do
+      send_frame(bob.session, 4, %{
+        "guild_id" => "stream-permissions",
+        "channel_id" => "12",
+        "self_mute" => false,
+        "self_deaf" => false,
+        flag => true
+      })
+
+      assert %{"channel_id" => "12", "self_video" => false, "self_stream" => false} =
+               await_in(bob, "12")
+    end
+
+    publish(
+      :guild,
+      "CHANNEL_CREATE",
+      %{"id" => "14", "type" => 2, "guild_id" => "stream-permissions"},
+      %{"guild_id" => "stream-permissions"}
+    )
+
+    assert %{"id" => "14"} = await(bob, "CHANNEL_CREATE")
+
+    send_frame(bob.session, 4, %{
+      "guild_id" => "stream-permissions",
+      "channel_id" => "14",
+      "self_mute" => false,
+      "self_deaf" => false,
+      "self_video" => true
+    })
+
+    assert %{"channel_id" => "12", "self_video" => false} = await_in(bob, "12")
+
+    send_frame(owner.session, 4, %{
+      "guild_id" => "stream-permissions",
+      "channel_id" => "12",
+      "self_mute" => false,
+      "self_deaf" => false,
+      "self_video" => true,
+      "self_stream" => true
+    })
+
+    assert %{"self_video" => true, "self_stream" => true} = await_in(owner, "12")
+    assert %{"channel_id" => "12"} = await(owner, "VOICE_SERVER_UPDATE")
+  end
+
+  test "an automatically idle caller is moved to the configured AFK channel" do
+    gid = "afk-flow"
+    setup_guild(gid)
+    Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+    bob = online_in(gid, "3")
+
+    publish(:guild, "CHANNEL_CREATE", %{"id" => "14", "type" => 2, "guild_id" => gid}, %{
+      "guild_id" => gid
+    })
+
+    publish(
+      :guild,
+      "GUILD_UPDATE",
+      %{"id" => gid, "afk_channel_id" => "14", "afk_timeout" => 1},
+      %{"guild_id" => gid}
+    )
+
+    join(bob, gid, "12")
+    assert %{"channel_id" => "12"} = await(bob, "VOICE_SERVER_UPDATE")
+    await_in(bob, "12")
+
+    send_frame(bob.session, 3, %{"status" => "idle", "activities" => [], "afk" => true})
+    assert %{"channel_id" => "14"} = await(bob, "VOICE_SERVER_UPDATE", 2_500)
+    assert %{"channel_id" => "14"} = await_in(bob, "14")
+  end
+
+  test "activity before the AFK deadline cancels the move" do
+    gid = "afk-cancel"
+    setup_guild(gid)
+    Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+    bob = online_in(gid, "3")
+
+    publish(:guild, "CHANNEL_CREATE", %{"id" => "14", "type" => 2, "guild_id" => gid}, %{
+      "guild_id" => gid
+    })
+
+    publish(
+      :guild,
+      "GUILD_UPDATE",
+      %{"id" => gid, "afk_channel_id" => "14", "afk_timeout" => 1},
+      %{"guild_id" => gid}
+    )
+
+    join(bob, gid, "12")
+    assert %{"channel_id" => "12"} = await(bob, "VOICE_SERVER_UPDATE")
+    send_frame(bob.session, 3, %{"status" => "idle", "activities" => [], "afk" => true})
+    send_frame(bob.session, 3, %{"status" => "online", "activities" => [], "afk" => false})
+    assert :none = await(bob, "VOICE_SERVER_UPDATE", 1_300)
+  end
+
   test "draining a node stops new allocations but keeps existing ones" do
     setup_guild("v6")
 

@@ -15,20 +15,29 @@ defmodule DiscordyGateway.Domain.Presence do
   @type aggregate :: %{
           status: String.t(),
           activities: [map()],
-          client_status: %{String.t() => String.t()}
+          client_status: %{String.t() => String.t()},
+          afk: boolean()
         }
 
   @spec aggregate([session_presence()]) :: aggregate()
   def aggregate(sessions) do
     visible = Enum.filter(sessions, &Map.has_key?(@priority, &1.status))
 
-    case Enum.max_by(visible, &@priority[&1.status], fn -> nil end) do
-      nil ->
-        %{status: "offline", activities: [], client_status: %{}}
+    result =
+      case Enum.max_by(visible, &@priority[&1.status], fn -> nil end) do
+        nil ->
+          %{status: "offline", activities: [], client_status: %{}}
 
-      best ->
-        %{status: best.status, activities: best.activities, client_status: client_status(visible)}
-    end
+        best ->
+          %{
+            status: best.status,
+            activities: best.activities,
+            client_status: client_status(visible)
+          }
+      end
+
+    # Include invisible sessions: a second active device must prevent an AFK move.
+    Map.put(result, :afk, sessions != [] and Enum.all?(sessions, & &1.afk))
   end
 
   @doc "Maps IDENTIFY properties to a Discord client_status platform."
