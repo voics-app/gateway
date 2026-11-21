@@ -10,8 +10,8 @@ defmodule DiscordyGateway.Application.Guild do
 
   use GenServer, restart: :temporary
 
-  alias DiscordyGateway.Application.{Dispatch, Pipeline, Ports, Settings}
-  alias DiscordyGateway.Application.Voice.{Effects, Room}
+  alias DiscordyGateway.Application.{Dispatch, Ids, Pipeline, Ports, Settings}
+  alias DiscordyGateway.Application.Voice.{ActivityReporter, Effects, Room}
   alias DiscordyGateway.Domain.Events.EventEnvelope
   alias DiscordyGateway.Domain.{Fanout, GuildState, Intents, Permissions, Presence, Subscriber}
   alias DiscordyGateway.Domain.Voice.{VoiceStates, VoiceTokenClaims}
@@ -58,6 +58,22 @@ defmodule DiscordyGateway.Application.Guild do
   def voice_state_update(guild_id, session_pid, request),
     do: cast(guild_id, {:voice_state_update, session_pid, request})
 
+  @doc "Checks the owning guild process for a member's current voice channel."
+  @spec user_in_voice?(String.t(), String.t(), String.t()) :: {:ok, boolean()} | {:error, term()}
+  def user_in_voice?(guild_id, channel_id, user_id) do
+    case Ports.server_directory().lookup({:guild, guild_id}) do
+      {:ok, pid} ->
+        try do
+          {:ok, GenServer.call(pid, {:user_in_voice?, channel_id, user_id})}
+        catch
+          :exit, reason -> {:error, reason}
+        end
+
+      :error ->
+        {:ok, false}
+    end
+  end
+
   @spec watch_together(String.t(), pid(), map()) :: :ok | :not_running
   def watch_together(guild_id, session_pid, command),
     do: cast(guild_id, {:watch_together, session_pid, command})
@@ -96,9 +112,18 @@ defmodule DiscordyGateway.Application.Guild do
   def init(opts) do
     :ok = :pg.join(DiscordyGateway.Pg, :voice_servers, self())
     id = Keyword.fetch!(opts, :id)
+    Process.send_after(self(), :voice_activity_tick, 15_000)
 
-    {:ok, %{id: id, seed: opts[:seed], cache: nil, subs: %{}, room: Room.new(id, id), idle: nil},
-     {:continue, :load}}
+    {:ok,
+     %{
+       id: id,
+       seed: opts[:seed],
+       cache: nil,
+       subs: %{},
+       room: Room.new(id, id),
+       idle: nil,
+       voice_generations: %{}
+     }, {:continue, :load}}
   end
 
   @impl true
@@ -129,6 +154,9 @@ defmodule DiscordyGateway.Application.Guild do
 
     {:reply, visible, state}
   end
+
+  def handle_call({:user_in_voice?, channel_id, user_id}, _from, state),
+    do: {:reply, Room.user_in_channel?(state.room, user_id, channel_id), state}
 
   @impl true
   def handle_cast({:join, %Subscriber{} = sub}, state),
@@ -182,12 +210,23 @@ defmodule DiscordyGateway.Application.Guild do
 
   def handle_info(:idle_check, state), do: {:noreply, state}
 
+  def handle_info(:voice_activity_tick, state) do
+    Process.send_after(self(), :voice_activity_tick, 15_000)
+    now = DateTime.to_iso8601(DateTime.utc_now())
+
+    Enum.each(state.voice_generations, fn {{user, session}, generation} ->
+      report_activity(state.id, user, session, generation, now, true)
+    end)
+
+    {:noreply, state}
+  end
+
   def handle_info({:voice_node_gone, node_id}, state) do
     {room, effects} =
       Room.node_gone(state.room, node_id, fn id -> Ports.session_directory().whereis(id) end)
 
     Effects.run(effects, &broadcast_voice_state(state, &1, &2))
-    {:noreply, %{state | room: room}}
+    {:noreply, activity_transition(state, room)}
   end
 
   def handle_info(_message, state), do: {:noreply, state}
@@ -523,7 +562,7 @@ defmodule DiscordyGateway.Application.Guild do
   defp apply_voice(state, sub, request, opts) do
     {room, effects} = Room.update(state.room, member(sub), request, opts)
     Effects.run(effects, &broadcast_voice_state(state, &1, &2))
-    %{state | room: room}
+    activity_transition(state, room)
   end
 
   defp remove_voice_session(state, nil), do: state
@@ -531,7 +570,45 @@ defmodule DiscordyGateway.Application.Guild do
   defp remove_voice_session(state, session_id) do
     {room, effects} = Room.remove_session(state.room, session_id)
     Effects.run(effects, &broadcast_voice_state(state, &1, &2))
-    %{state | room: room}
+    activity_transition(state, room)
+  end
+
+  defp activity_transition(state, room) do
+    now = DateTime.to_iso8601(DateTime.utc_now())
+    active = room |> Room.voice_states() |> Map.new(fn s -> {{s.user_id, s.session_id}, true} end)
+
+    {kept, removed} =
+      Enum.split_with(state.voice_generations, fn {key, _} -> Map.has_key?(active, key) end)
+
+    Enum.each(removed, fn {{user, session}, generation} ->
+      report_activity(state.id, user, session, generation, now, false)
+    end)
+
+    generations = Map.new(kept)
+
+    generations =
+      Enum.reduce(active, generations, fn {{user, session} = key, _}, acc ->
+        if Map.has_key?(acc, key) do
+          acc
+        else
+          generation = Ids.uuid_v4()
+          report_activity(state.id, user, session, generation, now, true)
+          Map.put(acc, key, generation)
+        end
+      end)
+
+    %{state | room: room, voice_generations: generations}
+  end
+
+  defp report_activity(guild, user, session, generation, observed_at, connected) do
+    ActivityReporter.submit(%{
+      "guild_id" => guild,
+      "user_id" => user,
+      "session_id" => session,
+      "generation_id" => generation,
+      "observed_at" => observed_at,
+      "connected" => connected
+    })
   end
 
   defp broadcast_voice_state(state, payload, gate_channel_id),
