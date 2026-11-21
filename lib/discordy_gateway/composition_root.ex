@@ -119,7 +119,8 @@ defmodule DiscordyGateway.CompositionRoot do
         Metrics.poller(),
         NodeMonitor,
         InboxSweeper,
-        UsageTicker
+        UsageTicker,
+        DiscordyGateway.Application.Voice.ActivityReporter
       ]
   end
 
