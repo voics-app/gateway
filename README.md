@@ -30,8 +30,8 @@ API starts sending those fields; older gateways can expose unknown guild-seed fi
 | Event consumers | One brod consumer group per topic (`discordy-gateway.<topic>`), P6 routing, idempotent on envelope `id` (LRU of the last 10k ids per node) |
 | Presence | Aggregated across a user's sessions (dnd > online > idle, invisible reads as offline), fanned out to guilds and friends; a friendship formed after READY (RELATIONSHIP_ADD, type 1) immediately hands both sides each other's current presence and tracks later changes. Client activities are sanitised (max 5, one custom status, text fields 128 characters, unknown fields dropped); an invalid activity closes the session with 4002 |
 | Voice | Least-loaded node of the region from etcd (P8), allocation in Valkey `voice:alloc:<id>`, one node per guild or DM call, reallocation when a node leaves etcd, `VOICE_SERVER_UPDATE` with an HS256 token, drain and undrain |
-| E2EE relay | Op 20/21: per-device Valkey streams, ACK deletes, 7-day TTL sweeper, replay after READY |
-| P2P | Op 22 relayed to online devices only; offline peers get `P2P_SIGNAL_FAILED {"error":"peer_offline"}`. READY carries short-lived TURN credentials (coturn REST scheme) built from `TURN_STATIC_AUTH_SECRET` and `TURN_URLS` |
+| E2EE relay | Op 20/21: API channel view and send permissions are checked before relay; per-device Valkey streams, ACK deletes, 7-day TTL sweeper, replay after READY |
+| P2P | Op 22 checks API channel view and send permissions before signalling online devices; unavailable or refused peers get `P2P_SIGNAL_FAILED {"error":"peer_offline"}`. READY carries short-lived TURN credentials (coturn REST scheme) built from `TURN_STATIC_AUTH_SECRET` and `TURN_URLS` |
 | Telemetry | Op 23 published as `VOICE_QUALITY` and a per-node `USAGE_TICK` on `discordy.telemetry.v1`; Watch Together (op 24) stamped with the server clock |
 
 HTTP endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics`, and (with `X-Internal-Token`)
@@ -104,7 +104,7 @@ cp .env.example .env     # JWT_PUBLIC_KEY must be the public half of the api's J
 make dev
 ```
 
-or run the image: `make docker && docker run --env-file .env -p 4000:4000 ghcr.io/discordy-voics/gateway:dev`.
+or run the image: `make docker && docker run --env-file .env -p 4000:4000 ghcr.io/voics-app/gateway:dev`.
 
 ## Test
 
@@ -186,3 +186,14 @@ listed, so downgrading does not help.
 ## Git hooks
 
 Tests run locally, not in CI. Install [lefthook](https://github.com/evilmartians/lefthook) once and run `make hooks` (or `lefthook install`) to enable the pre-push hook in `lefthook.yml`: it runs this repository's lint and unit tests before every push. CI repeats only the slim gate on pull requests. Skip once with `LEFTHOOK=0 git push`.
+
+### Gateway compression
+
+Connect with `v=1&encoding=json&compress=zstd-stream` to receive binary frames in one
+continuous zstd stream per WebSocket connection. Each event is flushed so it can be
+decoded immediately. Client-to-server frames remain JSON text. A reconnect starts a
+new stream, including when resuming a session. Without the parameter, server frames
+remain JSON text. Unknown compression values are rejected. OTP 29 is required.
+
+Run `mix run --no-start bench/compression.exs` to compare event bytes in a sample stream.
+This is a small illustrative payload, not a production bandwidth measurement.
