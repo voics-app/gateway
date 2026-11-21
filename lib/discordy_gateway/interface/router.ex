@@ -22,11 +22,12 @@ defmodule DiscordyGateway.Interface.Router do
   get "/gateway" do
     conn = fetch_query_params(conn)
 
-    if conn.query_params["v"] == "1" and conn.query_params["encoding"] == "json" do
+    if conn.query_params["v"] == "1" and conn.query_params["encoding"] == "json" and
+         conn.query_params["compress"] in [nil, "zstd-stream"] do
       HttpMetrics.record(conn, 101)
 
       conn
-      |> WebSockAdapter.upgrade(Socket, [],
+      |> WebSockAdapter.upgrade(Socket, [compression: conn.query_params["compress"]],
         timeout: @idle_timeout_ms,
         max_frame_size: @max_frame_size,
         fullsweep_after: @fullsweep_after,
@@ -34,7 +35,7 @@ defmodule DiscordyGateway.Interface.Router do
       )
       |> halt()
     else
-      json(conn, 400, %{"error" => "unsupported version or encoding; use v=1&encoding=json"})
+      json(conn, 400, %{"error" => "unsupported version, encoding or compression"})
     end
   end
 
