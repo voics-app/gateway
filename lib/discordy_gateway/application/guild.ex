@@ -66,6 +66,20 @@ defmodule DiscordyGateway.Application.Guild do
   def request_members(guild_id, session_pid, request),
     do: cast(guild_id, {:request_members, session_pid, request})
 
+  @doc "Revalidates channel visibility for a passive batch at delivery time."
+  @spec visible_channels(String.t(), pid(), [String.t()]) :: {:ok, [String.t()]} | :error
+  def visible_channels(guild_id, session_pid, channel_ids) do
+    case Ports.server_directory().lookup({:guild, guild_id}) do
+      {:ok, pid} ->
+        {:ok, GenServer.call(pid, {:visible_channels, session_pid, channel_ids}, 1_000)}
+
+      :error ->
+        :error
+    end
+  catch
+    :exit, _ -> :error
+  end
+
   defp cast(guild_id, message) do
     case Ports.server_directory().lookup({:guild, guild_id}) do
       {:ok, pid} -> GenServer.cast(pid, message)
@@ -93,6 +107,27 @@ defmodule DiscordyGateway.Application.Guild do
       {:ok, cache} -> {:noreply, schedule_idle(%{state | cache: cache, seed: nil})}
       {:error, reason} -> {:stop, {:shutdown, reason}, state}
     end
+  end
+
+  @impl true
+  def handle_call({:visible_channels, pid, channel_ids}, _from, state) do
+    visible =
+      case Map.fetch(state.subs, pid) do
+        {:ok, %{sub: sub}} ->
+          now = System.os_time(:millisecond)
+
+          Enum.filter(channel_ids, fn id ->
+            Permissions.has?(
+              GuildState.channel_permissions(state.cache, sub.user_id, id, now),
+              :view_channel
+            )
+          end)
+
+        :error ->
+          []
+      end
+
+    {:reply, visible, state}
   end
 
   @impl true
@@ -175,7 +210,8 @@ defmodule DiscordyGateway.Application.Guild do
     if GuildState.member?(state.cache, sub.user_id) do
       state = state |> drop_monitor(sub.pid) |> cancel_idle()
       ref = Process.monitor(sub.pid)
-      Dispatch.to_sessions([sub.pid], "GUILD_CREATE", guild_create_payload(state, sub))
+      encoded = Dispatch.encode(guild_create_payload(state, sub))
+      send(sub.pid, {:guild_snapshot, state.id, sub.snapshot_token, encoded})
       %{state | subs: Map.put(state.subs, sub.pid, %{sub: sub, ref: ref})}
     else
       send(sub.pid, {:join_rejected, state.id})
@@ -283,11 +319,61 @@ defmodule DiscordyGateway.Application.Guild do
   # clients learn about it through MESSAGE_DELETE_BULK; this event is never fanned out.
   defp handle_event(%EventEnvelope{type: "BAN_MESSAGE_PURGE"}, state), do: {:noreply, state}
 
+  defp handle_event(%EventEnvelope{type: "THREAD_MEMBERS_UPDATE", data: data} = envelope, state) do
+    updated = GuildState.apply_event(state.cache, "THREAD_MEMBERS_UPDATE", data)
+
+    if updated != state.cache do
+      public_data = Map.drop(data, ["_membership_version", "_member_ids"])
+      fanout(state, "THREAD_MEMBERS_UPDATE", public_data, envelope.channel_id, updated)
+      notify_thread_visibility_changes(state, updated, data)
+    end
+
+    {:noreply, %{state | cache: updated}}
+  end
+
   defp handle_event(%EventEnvelope{type: type, data: data} = envelope, state) do
     updated = GuildState.apply_event(state.cache, type, data)
     plan_cache = if type in @remove_events, do: state.cache, else: updated
     fanout(state, type, data, envelope.channel_id, plan_cache)
     after_event(type, data, %{state | cache: updated})
+  end
+
+  defp notify_thread_visibility_changes(state, updated, data) do
+    id = data["id"]
+    now = System.os_time(:millisecond)
+    channel = GuildState.channel(updated, id)
+
+    for {_pid, %{sub: sub}} <- state.subs,
+        Intents.allows?(sub.intents, "THREAD_CREATE", :guild) do
+      before =
+        Permissions.has?(
+          GuildState.channel_permissions(state.cache, sub.user_id, id, now),
+          :view_channel
+        )
+
+      after_change =
+        Permissions.has?(
+          GuildState.channel_permissions(updated, sub.user_id, id, now),
+          :view_channel
+        )
+
+      cond do
+        not before and after_change and is_map(channel) ->
+          Dispatch.to_guild_sessions([sub.pid], state.id, "THREAD_CREATE", channel, id)
+
+        before and not after_change ->
+          Dispatch.to_guild_sessions(
+            [sub.pid],
+            state.id,
+            "THREAD_DELETE",
+            %{"id" => id, "guild_id" => state.id},
+            id
+          )
+
+        true ->
+          :ok
+      end
+    end
   end
 
   defp after_event("GUILD_DELETE", _data, state) do
@@ -335,7 +421,13 @@ defmodule DiscordyGateway.Application.Guild do
         &elem(&1, 0)
       )
       |> Enum.each(fn {{variant, quiet?}, pids} ->
-        Dispatch.to_sessions(pids, event, variant_payload(data, variant, quiet?))
+        Dispatch.to_guild_sessions(
+          pids,
+          state.id,
+          event,
+          variant_payload(data, variant, quiet?),
+          channel_id
+        )
       end)
     end)
   end

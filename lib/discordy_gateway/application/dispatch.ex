@@ -28,6 +28,15 @@ defmodule DiscordyGateway.Application.Dispatch do
     Enum.each(pids, &send_encoded(&1, event, encoded))
   end
 
+  @doc "Sends a guild event with its permission gate to subscribed sessions."
+  @spec to_guild_sessions([pid()], String.t(), String.t(), term(), String.t() | nil) :: :ok
+  def to_guild_sessions([], _guild_id, _event, _payload, _gate), do: :ok
+
+  def to_guild_sessions(pids, guild_id, event, payload, gate) do
+    encoded = encode(payload)
+    Enum.each(pids, &send(&1, {:guild_dispatch, guild_id, event, encoded, gate}))
+  end
+
   @doc "Sends a relay frame (op 20, 22 or 24) to a session."
   @spec relay(pid(), atom(), map()) :: :ok
   def relay(pid, kind, payload) do

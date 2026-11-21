@@ -28,7 +28,8 @@ defmodule DiscordyGateway.Contracts do
     voice_telemetry: 23,
     watch_together: 24,
     call_decline: 25,
-    call_ring: 26
+    call_ring: 26,
+    session_mode: 27
   }
 
   @close_codes %{

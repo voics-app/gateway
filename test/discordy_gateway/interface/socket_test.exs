@@ -1,8 +1,9 @@
 defmodule DiscordyGateway.Interface.SocketTest do
   use DiscordyGateway.Case, async: false
 
-  alias DiscordyGateway.Application.Admission
+  alias DiscordyGateway.Application.{Admission, Events.Ingest, Ports}
   alias DiscordyGateway.Fakes.MemoryProbe
+  alias DiscordyGateway.Fixtures
   alias DiscordyGateway.Interface.{Router, Socket}
 
   setup do
@@ -34,6 +35,14 @@ defmodule DiscordyGateway.Interface.SocketTest do
     end
   end
 
+  defp recv_dispatch(conn, event) do
+    case recv(conn) do
+      {:text, %{"t" => ^event}} = frame -> frame
+      {:text, _other} -> recv_dispatch(conn, event)
+      other -> other
+    end
+  end
+
   test "completes HELLO, IDENTIFY and READY over a real WebSocket", %{conn: conn} do
     assert {:ok, stream} = upgrade(conn)
     assert {:text, %{"op" => 10, "d" => %{"heartbeat_interval" => 1000}}} = recv(conn)
@@ -49,6 +58,90 @@ defmodule DiscordyGateway.Interface.SocketTest do
 
     :gun.ws_send(conn, stream, {:text, Jason.encode!(%{"op" => 1, "d" => 1})})
     assert {:text, %{"op" => 11}} = recv(conn)
+  end
+
+  test "a passive WebSocket receives a delta and a fresh snapshot on activation", %{conn: conn} do
+    settings = Application.fetch_env!(:discordy_gateway, :settings)
+
+    Application.put_env(
+      :discordy_gateway,
+      :settings,
+      Keyword.put(settings, :identify_timeout_ms, 5_000)
+    )
+
+    on_exit(fn -> Application.put_env(:discordy_gateway, :settings, settings) end)
+    gid = unique_id()
+    guild = Fixtures.guild_payload(gid)
+    Fakes.put({:guild, gid}, {:ok, guild})
+
+    Fakes.put(
+      {:ready, "2"},
+      {:ok,
+       %{
+         "user" => %{"id" => "2"},
+         "guilds" => [guild],
+         "private_channels" => [],
+         "relationships" => [],
+         "user_settings" => %{}
+       }}
+    )
+
+    Fakes.put({:read_states, "2"}, {:ok, %{entries: [], versioned: true}})
+    assert {:ok, stream} = upgrade(conn)
+    assert {:text, %{"op" => 10}} = recv(conn)
+
+    :gun.ws_send(
+      conn,
+      stream,
+      {:text,
+       Jason.encode!(%{
+         "op" => 2,
+         "d" => %{"token" => "user-2", "intents" => 0, "passive" => true}
+       })}
+    )
+
+    assert {:text, %{"t" => "READY", "d" => %{"session_id" => id}}} = recv(conn)
+    session = Ports.session_directory().whereis(id)
+
+    :sys.get_state(session)
+
+    {:ok, guild_pid} =
+      Ports.server_directory().lookup({:guild, gid})
+
+    :sys.get_state(guild_pid)
+    :sys.get_state(session)
+
+    event = %{
+      "id" => "ws-message",
+      "type" => "MESSAGE_CREATE",
+      "guild_id" => gid,
+      "channel_id" => "10",
+      "data" => %{"id" => "1050", "channel_id" => "10", "content" => "private body"}
+    }
+
+    Ingest.handle(:message, Jason.encode!(event))
+    :sys.get_state(guild_pid)
+    token = :sys.get_state(session).passive_token
+    send(session, {:passive_flush, token})
+
+    assert {:text,
+            %{
+              "t" => "PASSIVE_UPDATE_V2",
+              "d" => %{"channels" => [%{"last_message_id" => "1050"}]}
+            }} = recv_dispatch(conn, "PASSIVE_UPDATE_V2")
+
+    :gun.ws_send(
+      conn,
+      stream,
+      {:text, Jason.encode!(%{"op" => 27, "d" => %{"passive" => false}})}
+    )
+
+    assert {:text, %{"t" => "READ_STATE_SYNC"}} = recv_dispatch(conn, "READ_STATE_SYNC")
+
+    assert {:text, %{"t" => "GUILD_CREATE", "d" => %{"channels" => channels}}} =
+             recv_dispatch(conn, "GUILD_CREATE")
+
+    assert Enum.find(channels, &(&1["id"] == "10"))["last_message_id"] == "1050"
   end
 
   test "negotiates a continuous compressed stream on a real WebSocket", %{conn: conn} do
