@@ -55,6 +55,64 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
       assert GuildState.channel_permissions(state, "2", "13", 0) != 0
     end
 
+    test "threads fail closed after their parent is removed", %{state: state} do
+      state =
+        state
+        |> GuildState.apply_event("THREAD_CREATE", %{
+          "id" => "21",
+          "type" => 11,
+          "parent_id" => "10"
+        })
+        |> GuildState.apply_event("THREAD_CREATE", %{
+          "id" => "22",
+          "type" => 12,
+          "parent_id" => "10",
+          "owner_id" => "2"
+        })
+        |> GuildState.apply_event("CHANNEL_DELETE", %{"id" => "10"})
+
+      for thread <- ~w(21 22), user <- ~w(1 2 3) do
+        assert GuildState.channel_permissions(state, user, thread, 0) == 0
+      end
+    end
+
+    test "private threads require ownership or manage threads", %{state: state} do
+      state =
+        state
+        |> GuildState.apply_event("GUILD_ROLE_CREATE", %{
+          "role" => %{"id" => "301", "permissions" => Integer.to_string(1 <<< 34)}
+        })
+        |> GuildState.apply_event("GUILD_MEMBER_ADD", %{
+          "user" => %{"id" => "4"},
+          "roles" => ["301"]
+        })
+        |> GuildState.apply_event("THREAD_CREATE", %{
+          "id" => "21",
+          "type" => 12,
+          "parent_id" => "10",
+          "owner_id" => "2"
+        })
+
+      assert GuildState.channel_permissions(state, "3", "21", 0) == 0
+      assert (GuildState.channel_permissions(state, "2", "21", 0) &&& @view) != 0
+      assert (GuildState.channel_permissions(state, "1", "21", 0) &&& @view) != 0
+      assert (GuildState.channel_permissions(state, "4", "21", 0) &&& @view) != 0
+      assert GuildState.channel_permissions(state, "999", "21", 0) == 0
+
+      state =
+        GuildState.apply_event(state, "CHANNEL_UPDATE", %{
+          "id" => "10",
+          "type" => 0,
+          "permission_overwrites" => [
+            %{"id" => "100", "type" => 0, "allow" => "0", "deny" => Integer.to_string(@view)}
+          ]
+        })
+
+      assert GuildState.channel_permissions(state, "2", "21", 0) == 0
+      assert GuildState.channel_permissions(state, "4", "21", 0) == 0
+      assert (GuildState.channel_permissions(state, "1", "21", 0) &&& @view) != 0
+    end
+
     test "non-members and unknown channels get nothing", %{state: state} do
       assert GuildState.channel_permissions(state, "999", "10", 0) == 0
       assert GuildState.channel_permissions(state, "3", "999", 0) == 0
@@ -197,7 +255,8 @@ defmodule DiscordyGateway.Domain.GuildStateTest do
     assert snap["id"] == "100"
     assert snap["name"] == "Guild"
     assert length(snap["roles"]) == 2
-    assert length(snap["channels"]) == 4
+    assert length(snap["channels"]) == 3
+    assert length(snap["threads"]) == 1
     assert length(snap["members"]) == 3
     assert snap["voice_region"] == "eu-west"
   end
