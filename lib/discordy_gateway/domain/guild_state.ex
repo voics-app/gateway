@@ -25,7 +25,7 @@ defmodule DiscordyGateway.Domain.GuildState do
   @spec from_payload(map()) :: t()
   def from_payload(%{"guild" => guild} = payload) when is_map(guild) do
     guild
-    |> Map.merge(Map.take(payload, ["roles", "channels", "members"]))
+    |> Map.merge(Map.take(payload, ["roles", "channels", "threads", "members"]))
     |> Map.put("voice_region", Map.get(payload, "voice_region", guild["voice_region"]))
     |> from_payload()
   end
@@ -35,18 +35,19 @@ defmodule DiscordyGateway.Domain.GuildState do
       id: payload["id"],
       owner_id: payload["owner_id"],
       voice_region: payload["voice_region"],
-      guild: Map.drop(payload, ["roles", "channels", "members"])
+      guild: Map.drop(payload, ["roles", "channels", "threads", "members"])
     }
 
     base = Enum.reduce(List.wrap(payload["roles"]), base, &put_role(&2, &1))
     base = Enum.reduce(List.wrap(payload["channels"]), base, &put_channel(&2, &1))
+    base = Enum.reduce(List.wrap(payload["threads"]), base, &put_channel(&2, &1))
     Enum.reduce(List.wrap(payload["members"]), base, &put_member(&2, &1))
   end
 
   @doc "Applies a guild-topic event to the cache. Unrelated events leave it unchanged."
   @spec apply_event(t(), String.t(), map()) :: t()
   def apply_event(state, "GUILD_UPDATE", data) do
-    guild = Map.merge(state.guild, Map.drop(data, ["roles", "channels", "members"]))
+    guild = Map.merge(state.guild, Map.drop(data, ["roles", "channels", "threads", "members"]))
 
     %{
       state
@@ -121,20 +122,36 @@ defmodule DiscordyGateway.Domain.GuildState do
   @spec channel_permissions(t(), String.t(), String.t(), integer()) :: non_neg_integer()
   def channel_permissions(state, user_id, channel_id, now_ms) do
     with {:ok, member} <- Map.fetch(state.members, user_id),
-         {:ok, channel} <- Map.fetch(state.channels, channel_id) do
-      Permissions.compute_channel(%{
-        owner_id: state.owner_id,
-        guild_id: state.id,
-        role_permissions: state.role_permissions,
-        member: member_ref(member),
-        overwrites: Map.get(state.overwrites, permission_source(state, channel), []),
-        channel_type: channel["type"] || 0,
-        timed_out: timed_out?(member, now_ms)
-      })
+         {:ok, channel} <- Map.fetch(state.channels, channel_id),
+         true <- thread_parent_present?(state, channel) do
+      permissions =
+        Permissions.compute_channel(%{
+          owner_id: state.owner_id,
+          guild_id: state.id,
+          role_permissions: state.role_permissions,
+          member: member_ref(member),
+          overwrites: Map.get(state.overwrites, permission_source(state, channel), []),
+          channel_type: channel["type"] || 0,
+          timed_out: timed_out?(member, now_ms)
+        })
+
+      if channel["type"] == 12 and channel["owner_id"] != user_id and
+           not Permissions.has?(permissions, :manage_threads) do
+        0
+      else
+        permissions
+      end
     else
-      :error -> 0
+      _ -> 0
     end
   end
+
+  defp thread_parent_present?(state, %{"type" => type, "parent_id" => parent})
+       when type in @thread_types and is_binary(parent),
+       do: Map.has_key?(state.channels, parent)
+
+  defp thread_parent_present?(_state, %{"type" => type}) when type in @thread_types, do: false
+  defp thread_parent_present?(_state, _channel), do: true
 
   @doc "Whether the channel is a voice or stage channel."
   @spec voice_channel?(t(), String.t()) :: boolean()
@@ -155,12 +172,18 @@ defmodule DiscordyGateway.Domain.GuildState do
   @doc "Flat Discord guild object used for READY and GUILD_CREATE."
   @spec snapshot(t()) :: map()
   def snapshot(state) do
+    {threads, channels} =
+      state.channels
+      |> Map.values()
+      |> Enum.split_with(&(&1["type"] in @thread_types))
+
     Map.merge(state.guild, %{
       "id" => state.id,
       "owner_id" => state.owner_id,
       "voice_region" => state.voice_region,
       "roles" => Map.values(state.roles),
-      "channels" => Map.values(state.channels),
+      "channels" => channels,
+      "threads" => threads,
       "members" => Map.values(state.members),
       "member_count" => map_size(state.members)
     })

@@ -24,11 +24,11 @@ defmodule DiscordyGateway.Application.Voice.Allocator do
   def release(server_id, node_id), do: Ports.voice_allocations().release(server_id, node_id)
 
   defp existing_or_pick(store, server_id, node_id, region) do
-    case Ports.voice_nodes().get_node(node_id) do
-      {:ok, node} ->
+    case find_node(node_id) do
+      %VoiceNode{} = node ->
         {:ok, node}
 
-      :error ->
+      nil ->
         store.release(server_id, node_id)
         pick(store, server_id, region)
     end
@@ -36,18 +36,21 @@ defmodule DiscordyGateway.Application.Voice.Allocator do
 
   defp pick(store, server_id, region) do
     with {:ok, node} <-
-           VoiceNode.pick_least_loaded(Ports.voice_nodes().list_nodes(), region, store.drained()),
+           VoiceNode.pick_least_loaded(routable_nodes(), region, store.drained()),
          {:ok, winner} <- store.claim(server_id, node.node_id) do
       resolve_winner(node, winner)
     end
   end
 
-  defp resolve_winner(%VoiceNode{node_id: id} = node, id), do: {:ok, node}
-
   defp resolve_winner(_node, winner) do
-    case Ports.voice_nodes().get_node(winner) do
-      {:ok, node} -> {:ok, node}
-      :error -> {:error, :no_voice_nodes}
+    case find_node(winner) do
+      %VoiceNode{} = node -> {:ok, node}
+      nil -> {:error, :no_voice_nodes}
     end
   end
+
+  defp find_node(id),
+    do: Enum.find(routable_nodes(), &(&1.node_id == id and VoiceNode.healthy?(&1)))
+
+  defp routable_nodes, do: VoiceNode.unique_routes(Ports.voice_nodes().list_nodes())
 end

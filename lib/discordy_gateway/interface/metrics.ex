@@ -23,6 +23,7 @@ defmodule DiscordyGateway.Interface.Metrics do
     [
       last_value("vm.memory.total", unit: :byte),
       last_value("vm.total_run_queue_lengths.total"),
+      last_value("discordy_gateway.cluster.ready"),
       counter("discordy_gateway.session.started.count"),
       counter("discordy_gateway.session.closed.count", tags: [:code]),
       counter("discordy_gateway.dispatch.sent.count", tags: [:event]),

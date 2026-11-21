@@ -234,8 +234,9 @@ defmodule DiscordyGateway.Application.Guild do
     snapshot
     |> Map.put(
       "channels",
-      Enum.filter(snapshot["channels"], &(&1["id"] in visible or thread_visible?(&1, visible)))
+      Enum.filter(snapshot["channels"], &(&1["id"] in visible))
     )
+    |> Map.put("threads", Enum.filter(snapshot["threads"], &(&1["id"] in visible)))
     |> Map.put("members", Enum.take(members, @create_member_cap))
     |> Map.put("large", length(members) > @create_member_cap)
     |> Map.put("voice_states", voice_state_payloads(state, visible))
@@ -250,11 +251,6 @@ defmodule DiscordyGateway.Application.Guild do
     )
     |> MapSet.new()
   end
-
-  defp thread_visible?(%{"parent_id" => parent}, visible) when is_binary(parent),
-    do: parent in visible
-
-  defp thread_visible?(_channel, _visible), do: false
 
   defp voice_state_payloads(state, visible) do
     state.room

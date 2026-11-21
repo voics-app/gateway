@@ -7,22 +7,28 @@ defmodule DiscordyGateway.Interface.Socket do
 
   @behaviour WebSock
 
-  alias DiscordyGateway.Application.{Admission, Session}
+  alias DiscordyGateway.Application.{Admission, RoutingReadiness, Session}
   alias DiscordyGateway.Contracts
 
   @impl true
-  def init(_opts) do
-    if Admission.admit?() do
-      start_session()
+  def init(opts) do
+    if RoutingReadiness.ready?() and Admission.admit?() do
+      start_session(opts)
     else
       {:stop, :normal, {Contracts.close_code(:server_overloaded), ""}, %{session: nil}}
     end
   end
 
-  defp start_session do
+  defp start_session(opts) do
     case Session.start(self()) do
       {:ok, session} ->
-        {:ok, %{session: session}}
+        compression =
+          if opts[:compression] == "zstd-stream" do
+            {:ok, context} = :zstd.context(:compress)
+            context
+          end
+
+        {:ok, %{session: session, compression: compression}}
 
       {:error, _reason} ->
         {:stop, :normal, {Contracts.close_code(:unknown_error), ""}, %{session: nil}}
@@ -45,10 +51,28 @@ defmodule DiscordyGateway.Interface.Socket do
     do: {:stop, :normal, {Contracts.close_code(:decode_error), ""}, state}
 
   @impl true
-  def handle_info({:gw_frame, frame}, state), do: {:push, {:text, frame}, state}
+  def handle_info({:gw_frame, frame}, %{compression: nil} = state),
+    do: {:push, {:text, frame}, state}
+
+  def handle_info({:gw_frame, frame}, %{compression: context} = state) do
+    output = compress(context, frame, [])
+    {:continue, flushed} = :zstd.flush(context)
+    {:push, {:binary, IO.iodata_to_binary([output, flushed])}, state}
+  end
+
   def handle_info({:gw_close, code}, state), do: {:stop, :normal, {code, ""}, state}
   def handle_info(_message, state), do: {:ok, state}
 
+  defp compress(context, data, output) do
+    case :zstd.stream(context, data) do
+      {:continue, remainder, bytes} -> compress(context, remainder, [output, bytes])
+      {:continue, bytes} -> [output, bytes]
+    end
+  end
+
   @impl true
+  def terminate(_reason, %{compression: context}) when not is_nil(context),
+    do: :zstd.close(context)
+
   def terminate(_reason, _state), do: :ok
 end

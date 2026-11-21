@@ -55,6 +55,25 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
 
   defp leave(client, gid), do: join(client, gid, nil)
 
+  test "allocation excludes replicas that advertise the same socket or media endpoint" do
+    Fakes.put(:voice_nodes, [
+      voice_node("socket-a", ws_url: "wss://rtc.test", users: 0),
+      voice_node("socket-b", ws_url: "wss://rtc.test:443/", users: 0),
+      voice_node("media-a", public_ip: "203.0.113.2", udp_port: 50_000),
+      voice_node("media-b", public_ip: "203.0.113.2", udp_port: 50_000),
+      voice_node("safe", public_ip: "203.0.113.2", udp_port: 50_001, users: 10)
+    ])
+
+    assert {:ok, %{node_id: "safe"}} = Allocator.allocate("unique-routes", "nl-home")
+
+    Fakes.put(:voice_nodes, [
+      voice_node("one", ws_url: "wss://shared.test"),
+      voice_node("two", ws_url: "wss://shared.test")
+    ])
+
+    assert {:error, :no_voice_nodes} = Allocator.allocate("ambiguous", "nl-home")
+  end
+
   test "joining voice allocates the least-loaded node and sends VOICE_SERVER_UPDATE" do
     setup_guild("v1")
 
@@ -182,6 +201,29 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
   test "allocation fails when every node is draining" do
     Fakes.put(:voice_nodes, [voice_node("a", draining: true)])
     assert {:error, :no_voice_nodes} = Allocator.allocate("srv-1", "nl-home")
+  end
+
+  test "new joins recheck health and blacklist for cached allocations without disconnecting callers" do
+    setup_guild("health-guild")
+    a = voice_node("a", region: "us-east")
+    b = voice_node("b", region: "us-east", users: 5)
+    Fakes.put(:voice_nodes, [a, b])
+    assert {:ok, %{node_id: "a"}} = Allocator.allocate("health-guild", "us-east")
+
+    {:ok, monitor} =
+      start_supervised({NodeMonitor, name: :health_node_monitor, interval_ms: 60_000})
+
+    alice = online_in("health-guild", "2")
+    join(alice, "health-guild", "12")
+    assert %{"token" => "voice-token:2:a:false"} = await(alice, "VOICE_SERVER_UPDATE")
+
+    Fakes.put(:voice_nodes, [Map.put(a, :health, :unhealthy), b])
+    :ok = NodeMonitor.check_now(monitor)
+    assert :none = await(alice, "VOICE_SERVER_UPDATE", 100)
+    assert {:ok, %{node_id: "b"}} = Allocator.allocate("health-guild", "us-east")
+
+    Fakes.put(:voice_nodes, [Map.put(a, :blacklisted, true), Map.put(b, :blacklisted, true)])
+    assert {:error, :no_voice_nodes} = Allocator.allocate("health-guild", "us-east")
   end
 
   test "when the node disappears the guild reallocates and re-sends VOICE_SERVER_UPDATE" do

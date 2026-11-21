@@ -9,5 +9,6 @@ defmodule DiscordyGateway.Application.Ports.PresenceStore do
               {:ok, [Presence.session_presence()]} | {:error, term()}
   @callback swap_aggregate(user_id :: String.t(), Presence.aggregate()) :: :changed | :unchanged
   @callback get_aggregates([String.t()]) :: %{String.t() => Presence.aggregate()}
-  @callback refresh(user_id :: String.t()) :: :ok
+  @callback refresh(user_id :: String.t(), session_id :: String.t()) ::
+              {:ok, [Presence.session_presence()]} | {:error, term()}
 end

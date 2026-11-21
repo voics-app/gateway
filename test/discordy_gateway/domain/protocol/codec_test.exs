@@ -61,7 +61,7 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
         Map.put(@identify, "presence", %{"status" => "dnd", "activities" => [], "afk" => false})
 
       assert {:ok, {:identify, identify}} = Codec.decode_inbound(frame(2, payload))
-      assert identify.presence == %{status: "dnd", activities: [], afk: false}
+      assert identify.presence == %{status: "dnd", activities: [], afk: false, background: false}
     end
 
     test "rejects a missing token" do
@@ -78,7 +78,13 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
       for status <- ~w(online idle dnd invisible) do
         d = %{"status" => status, "activities" => [%{"name" => "x", "type" => 0}], "afk" => true}
         assert {:ok, {:presence_update, p}} = Codec.decode_inbound(frame(3, d))
-        assert p == %{status: status, activities: [%{"name" => "x", "type" => 0}], afk: true}
+
+        assert p == %{
+                 status: status,
+                 activities: [%{"name" => "x", "type" => 0}],
+                 afk: true,
+                 background: false
+               }
       end
     end
 

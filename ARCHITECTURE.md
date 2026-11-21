@@ -90,7 +90,7 @@ flowchart LR
   users instead of the container being OOM-killed with everyone connected. Metrics:
   `discordy_gateway_admission_sample_memory_bytes`, `_memory_limit_bytes`, `_closed` and
   `discordy_gateway_admission_refused_count`.
-  The Valkey write is not on the session path and has its own two connections, so event dedup never waits behind a batch: `ResumeWriter` (4 processes, a session always maps to the
+  The Valkey write is not on the session path and has its own two connections, so short Valkey calls never wait behind a batch: `ResumeWriter` (4 processes, a session always maps to the
   same one) collects the entries that arrived while the previous batch was in flight and writes them as
   one pipeline; `fetch` and `delete` wait for the session's pending entries first. A socket whose
   mailbox holds more than `TRANSPORT_BACKLOG_LIMIT` frames (checked every 32nd frame) is killed by its
@@ -112,6 +112,12 @@ flowchart LR
   Consumers long-poll with `max_wait_time` 500 ms and `sleep_timeout` 20 ms (`TopicConsumer.consumer_config/0`);
   brod's defaults (10 s / 1 s) added ~450 ms p50 / ~860 ms p95 to every delivery (gateway#45).
   `Deduplicator` makes routing idempotent on the envelope id.
+- **Cluster routing gate**: `RoutingMembership` resolves the existing headless-service DNS and
+  verifies every advertised peer is connected and sees this node's `:pg` marker. This also works
+  during rolling upgrades with older peers. The cached probe expires after two seconds and
+  current distribution connectivity is checked on every read. `RoutingReadiness` fences socket
+  admission and pauses Kafka callbacks before ingestion/acknowledgement while the view is
+  incomplete. Shared consumers must not commit events against a partitioned session directory.
 - **Voice.NodeMonitor** diffs the etcd view every two seconds and tells every local guild and
   call process when a node vanished, so they reallocate and re-send `VOICE_SERVER_UPDATE`.
 - **InboxSweeper** and **UsageTicker** run every minute.
@@ -133,11 +139,20 @@ application's bot user.
 ## Voice (P8)
 
 The guild (or DM call) process owns the voice states of its scope. On join it needs a node:
-the allocation in Valkey `voice:alloc:<id>` is reused while its node is registered in etcd,
+the allocation in Valkey `voice:alloc:<id>` is reused while its node is registered in etcd and
+passes the current health and blacklist checks,
 otherwise the least-loaded non-draining node of the region is claimed with `SET NX`, so
 concurrent joiners agree. The token is an HS256 JWT valid for 60 seconds with
 `sub, sid, srv, chn, node, e2ee`. Drain marks a node in Valkey (gateway side) and etcd
 (`/discordy/voice/drain/<node_id>`, for the node itself).
+
+`Voice.Discovery` projects node registrations, leased health observations and manual node/region
+blacklist markers from one etcd snapshot. Probe-required nodes need a healthy observation for
+their exact registration lease; legacy nodes tolerate missing observations. The directory watches
+the voice prefix and takes a linearizable snapshot every second. A two-second monotonic read
+deadline fences a paused process or stalled watch. Snapshot revisions discard older queued watch
+events. Allocation rechecks the winning node after claiming it. `NodeMonitor` still sees unhealthy
+and blacklisted nodes as registered, so excluding new joins does not evict existing callers.
 
 ## Data and guarantees
 

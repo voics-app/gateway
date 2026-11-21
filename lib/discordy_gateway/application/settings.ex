@@ -17,6 +17,10 @@ defmodule DiscordyGateway.Application.Settings do
   @spec resume_window_ms() :: pos_integer()
   def resume_window_ms, do: get(:resume_window_ms, Contracts.resume_window_ms())
 
+  @doc "Bounded availability indication after a mobile app reports background suspension."
+  @spec mobile_background_presence_ms() :: pos_integer()
+  def mobile_background_presence_ms, do: get(:mobile_background_presence_ms, 86_400_000)
+
   @doc """
   How long a dropped connection keeps its voice state before the session leaves voice. Shorter than
   the resume window, so a closed or crashed client does not hold a call open for minutes.

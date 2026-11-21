@@ -111,6 +111,7 @@ defmodule DiscordyGateway.Fakes.PresenceStore do
   @moduledoc false
   @behaviour DiscordyGateway.Application.Ports.PresenceStore
 
+  alias DiscordyGateway.Domain.Presence
   alias DiscordyGateway.Fakes
 
   @impl true
@@ -134,11 +135,14 @@ defmodule DiscordyGateway.Fakes.PresenceStore do
 
   @impl true
   def get_aggregates(user_ids) do
-    for id <- user_ids, aggregate = Fakes.get({:aggregate, id}), into: %{}, do: {id, aggregate}
+    for id <- user_ids, into: %{} do
+      sessions = Map.values(Fakes.get({:presence, id}, %{}))
+      {id, Presence.aggregate(sessions)}
+    end
   end
 
   @impl true
-  def refresh(_user_id), do: :ok
+  def refresh(user_id, _session_id), do: {:ok, Map.values(Fakes.get({:presence, user_id}, %{}))}
 end
 
 defmodule DiscordyGateway.Fakes.InboxStore do
@@ -334,6 +338,13 @@ defmodule DiscordyGateway.Fakes.MessagesClient do
   @behaviour DiscordyGateway.Application.Ports.MessagesClient
 
   alias DiscordyGateway.Fakes
+
+  @impl true
+  def fetch_read_states(user_id) do
+    Fakes.record(:read_states, user_id)
+    if hook = Fakes.get(:read_states_hook), do: hook.(user_id)
+    Fakes.get({:read_states, user_id}, {:ok, %{entries: [], versioned: false}})
+  end
 
   @impl true
   def create_call_message(channel_id, author_id, participants) do

@@ -28,7 +28,7 @@ jobs:
     uses: voics-app/.github/.github/workflows/elixir.yml@main
     with:
       image-name: gateway
-      description: Discordy realtime gateway
+      description: Voics realtime gateway
     secrets: inherit
 
   docker:
@@ -40,5 +40,5 @@ jobs:
     uses: voics-app/.github/.github/workflows/docker.yml@main
     with:
       image-name: gateway
-      description: "Discordy realtime gateway: WebSocket sessions, guild fan-out, voice allocation, E2EE and P2P relay"
+      description: "Voics realtime gateway: WebSocket sessions, guild fan-out, voice allocation, E2EE and P2P relay"
     secrets: inherit
