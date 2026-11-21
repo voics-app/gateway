@@ -61,13 +61,17 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
   defp request_to_speak(d) do
     if Map.has_key?(d, "request_to_speak_timestamp") do
       case Map.get(d, "request_to_speak_timestamp") do
-        nil -> {:ok, nil}
+        nil ->
+          {:ok, nil}
+
         value when is_binary(value) and value != "" ->
           case DateTime.from_iso8601(value) do
             {:ok, _datetime, _offset} -> {:ok, value}
             _ -> {:error, {:invalid, "request_to_speak_timestamp"}}
           end
-        _ -> {:error, {:invalid, "request_to_speak_timestamp"}}
+
+        _ ->
+          {:error, {:invalid, "request_to_speak_timestamp"}}
       end
     else
       {:ok, :unchanged}

@@ -191,7 +191,8 @@ defmodule DiscordyGateway.Application.Voice.CapabilitySession do
             send(state.owner, {:voice_capability_applied, state.session_id, update})
             {:noreply, schedule(%{state | policy: policy}, @renew_ms)}
 
-          {:error, reason, _policy, :disconnect} -> fail(state, reason)
+          {:error, reason, _policy, :disconnect} ->
+            fail(state, reason)
         end
 
       {:error, {:http_status, 503}} ->

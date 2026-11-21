@@ -35,11 +35,26 @@ defmodule DiscordyGateway.Domain.Voice.VoiceNodeTest do
   end
 
   test "control endpoint is private and bound to a live registration identity" do
-    raw = %{"node_id" => "n", "region" => "r", "ws_url" => "wss://public.test", "control_ip" => "10.42.0.8", "control_port" => 4100, "registration_lease" => "123"}
-    assert {:ok, %{control_endpoint: %{ip: "10.42.0.8", port: 4100, lease: "123"}}} = VoiceNode.parse(raw)
-    assert {:ok, %{control_endpoint: nil}} = VoiceNode.parse(Map.put(raw, "control_ip", "203.0.113.1"))
-    assert {:ok, %{control_endpoint: nil}} = VoiceNode.parse(Map.put(raw, "registration_lease", "0"))
-    assert {:ok, %{control_endpoint: nil}} = VoiceNode.parse(Map.delete(raw, "registration_lease"))
+    raw = %{
+      "node_id" => "n",
+      "region" => "r",
+      "ws_url" => "wss://public.test",
+      "control_ip" => "10.42.0.8",
+      "control_port" => 4100,
+      "registration_lease" => "123"
+    }
+
+    assert {:ok, %{control_endpoint: %{ip: "10.42.0.8", port: 4100, lease: "123"}}} =
+             VoiceNode.parse(raw)
+
+    assert {:ok, %{control_endpoint: nil}} =
+             VoiceNode.parse(Map.put(raw, "control_ip", "203.0.113.1"))
+
+    assert {:ok, %{control_endpoint: nil}} =
+             VoiceNode.parse(Map.put(raw, "registration_lease", "0"))
+
+    assert {:ok, %{control_endpoint: nil}} =
+             VoiceNode.parse(Map.delete(raw, "registration_lease"))
   end
 
   describe "pick_least_loaded/3" do

@@ -48,7 +48,11 @@ defmodule DiscordyGateway.Domain.Voice.VoiceNode do
 
   # A control address is optional and cannot be derived from the public websocket URL.
   # The etcd registration is trusted, but reject public addresses and incomplete lease identities.
-  defp control_endpoint(%{"control_ip" => ip, "control_port" => port, "registration_lease" => lease})
+  defp control_endpoint(%{
+         "control_ip" => ip,
+         "control_port" => port,
+         "registration_lease" => lease
+       })
        when is_binary(ip) and is_integer(port) and port in 1..65_535 and is_binary(lease) do
     with {number, ""} when number > 0 <- Integer.parse(lease),
          {:ok, address} <- :inet.parse_address(String.to_charlist(ip)),
@@ -64,7 +68,12 @@ defmodule DiscordyGateway.Domain.Voice.VoiceNode do
   @doc "Returns a validated private control endpoint, if this registration has one."
   @spec validated_control(t()) :: map() | nil
   def validated_control(%__MODULE__{control_endpoint: %{ip: ip, port: port, lease: lease}}),
-    do: control_endpoint(%{"control_ip" => ip, "control_port" => port, "registration_lease" => lease})
+    do:
+      control_endpoint(%{
+        "control_ip" => ip,
+        "control_port" => port,
+        "registration_lease" => lease
+      })
 
   def validated_control(_node), do: nil
   defp private_ipv4?({10, _, _, _}), do: true

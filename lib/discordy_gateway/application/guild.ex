@@ -638,6 +638,7 @@ defmodule DiscordyGateway.Application.Guild do
       {%{pid: pid, ref: ref}, remaining} ->
         Process.demonitor(ref, [:flush])
         if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+
         %{
           state
           | capabilities: remaining,

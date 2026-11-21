@@ -68,12 +68,18 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStates do
         :unchanged ->
           case previous do
             %{session_id: ^session_id, channel_id: channel, request_to_speak_timestamp: timestamp}
-            when channel == request.channel_id -> timestamp
-            _ -> nil
+            when channel == request.channel_id ->
+              timestamp
+
+            _ ->
+              nil
           end
 
-        timestamp when is_binary(timestamp) -> timestamp
-        nil -> nil
+        timestamp when is_binary(timestamp) ->
+          timestamp
+
+        nil ->
+          nil
       end
     else
       nil

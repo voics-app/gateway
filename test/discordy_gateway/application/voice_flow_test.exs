@@ -42,11 +42,15 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
 
   defp await_capability_after(guild, channel, user, revision, attempts \\ 100) do
     case DiscordyGateway.Application.Guild.publish_permissions(guild, channel, user) do
-      {:ok, %{"revision" => current} = grant} when current > revision -> grant
+      {:ok, %{"revision" => current} = grant} when current > revision ->
+        grant
+
       _ when attempts > 0 ->
         Process.sleep(20)
         await_capability_after(guild, channel, user, revision, attempts - 1)
-      _ -> flunk("capability revision did not advance")
+
+      _ ->
+        flunk("capability revision did not advance")
     end
   end
 
