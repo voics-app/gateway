@@ -64,26 +64,6 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
     end
   end
 
-  defp request_to_speak(d) do
-    if Map.has_key?(d, "request_to_speak_timestamp") do
-      case Map.get(d, "request_to_speak_timestamp") do
-        nil ->
-          {:ok, nil}
-
-        value when is_binary(value) and value != "" ->
-          case DateTime.from_iso8601(value) do
-            {:ok, _datetime, _offset} -> {:ok, value}
-            _ -> {:error, {:invalid, "request_to_speak_timestamp"}}
-          end
-
-        _ ->
-          {:error, {:invalid, "request_to_speak_timestamp"}}
-      end
-    else
-      {:ok, :unchanged}
-    end
-  end
-
   defp decode_map(:resume, d) do
     with {:ok, token} <- string(d, "token"),
          {:ok, session_id} <- string(d, "session_id"),
@@ -200,6 +180,26 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          {:ok, user_ids} <- string_list(d, "user_ids", :required),
          :ok <- max_length(user_ids, @max_ring_targets) do
       {:ok, %{channel_id: channel_id, user_ids: Enum.uniq(user_ids)}}
+    end
+  end
+
+  defp request_to_speak(d) do
+    if Map.has_key?(d, "request_to_speak_timestamp") do
+      case Map.get(d, "request_to_speak_timestamp") do
+        nil ->
+          {:ok, nil}
+
+        value when is_binary(value) and value != "" ->
+          case DateTime.from_iso8601(value) do
+            {:ok, _datetime, _offset} -> {:ok, value}
+            _ -> {:error, {:invalid, "request_to_speak_timestamp"}}
+          end
+
+        _ ->
+          {:error, {:invalid, "request_to_speak_timestamp"}}
+      end
+    else
+      {:ok, :unchanged}
     end
   end
 

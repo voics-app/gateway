@@ -119,6 +119,7 @@ defmodule DiscordyGateway.Application.Guild do
        room: Room.new(id, id),
        capabilities: %{},
        stage_changes: %{},
+       stage_speakers: MapSet.new(),
        idle: nil
      }, {:continue, :load}}
   end
@@ -252,11 +253,23 @@ defmodule DiscordyGateway.Application.Guild do
         expected_audio = not suppress
 
         with true <- update["can_publish_audio"] == expected_audio,
-             %{session_id: ^session_id, guarded_publish: true} = voice <-
+             %{session_id: ^session_id, guarded_publish: true} <-
                VoiceStates.get(state.room.states, user_id) do
           states = VoiceStates.set_suppress(state.room.states, user_id, suppress)
           voice = VoiceStates.get(states, user_id)
-          state = %{state | room: %{state.room | states: states}, stage_changes: remaining}
+
+          speakers =
+            if suppress,
+              do: MapSet.delete(state.stage_speakers, session_id),
+              else: MapSet.put(state.stage_speakers, session_id)
+
+          state = %{
+            state
+            | room: %{state.room | states: states},
+              stage_changes: remaining,
+              stage_speakers: speakers
+          }
+
           broadcast_voice_state(state, VoiceStates.to_payload(voice, state.id), voice.channel_id)
           {:noreply, refresh_stage_capabilities(state)}
         else
@@ -733,7 +746,8 @@ defmodule DiscordyGateway.Application.Guild do
         %{
           state
           | capabilities: remaining,
-            stage_changes: Map.delete(state.stage_changes, session_id)
+            stage_changes: Map.delete(state.stage_changes, session_id),
+            stage_speakers: MapSet.delete(state.stage_speakers, session_id)
         }
     end
   end
@@ -750,7 +764,7 @@ defmodule DiscordyGateway.Application.Guild do
           )
 
         {acc, voice} =
-          if not voice.suppress and
+          if not voice.suppress and not MapSet.member?(acc.stage_speakers, voice.session_id) and
                (not Permissions.has?(bits, :manage_channels) or not Permissions.has?(bits, :speak)) do
             states = VoiceStates.set_suppress(acc.room.states, voice.user_id, true)
             voice = VoiceStates.get(states, voice.user_id)
@@ -766,7 +780,13 @@ defmodule DiscordyGateway.Application.Guild do
             remove_voice_session(acc, voice.session_id)
 
           cap = Map.get(acc.capabilities, voice.session_id) ->
-            CapabilitySession.update(cap.pid, bits, voice.suppress)
+            suppressed =
+              case Map.get(acc.stage_changes, voice.session_id) do
+                %{suppress: pending} -> pending
+                nil -> voice.suppress
+              end
+
+            CapabilitySession.update(cap.pid, bits, suppressed)
             acc
 
           true ->
