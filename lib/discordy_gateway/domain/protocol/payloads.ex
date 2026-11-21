@@ -49,7 +49,8 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          {:ok, self_mute} <- boolean(d, "self_mute", :required),
          {:ok, self_deaf} <- boolean(d, "self_deaf", :required),
          {:ok, self_video} <- boolean(d, "self_video", false),
-         {:ok, self_stream} <- boolean(d, "self_stream", false) do
+         {:ok, self_stream} <- boolean(d, "self_stream", false),
+         {:ok, request_to_speak} <- request_to_speak(d) do
       {:ok,
        %{
          guild_id: guild_id,
@@ -57,7 +58,8 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          self_mute: self_mute,
          self_deaf: self_deaf,
          self_video: self_video,
-         self_stream: self_stream
+         self_stream: self_stream,
+         request_to_speak: request_to_speak
        }}
     end
   end
@@ -180,6 +182,23 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
       {:ok, %{channel_id: channel_id, user_ids: Enum.uniq(user_ids)}}
     end
   end
+
+  defp request_to_speak(d) do
+    if Map.has_key?(d, "request_to_speak_timestamp"),
+      do: speak_timestamp(Map.get(d, "request_to_speak_timestamp")),
+      else: {:ok, :unchanged}
+  end
+
+  defp speak_timestamp(nil), do: {:ok, nil}
+
+  defp speak_timestamp(value) when is_binary(value) and value != "" do
+    case DateTime.from_iso8601(value) do
+      {:ok, _datetime, _offset} -> {:ok, value}
+      _ -> {:error, {:invalid, "request_to_speak_timestamp"}}
+    end
+  end
+
+  defp speak_timestamp(_value), do: {:error, {:invalid, "request_to_speak_timestamp"}}
 
   defp optional_passive(d) do
     if Map.has_key?(d, "passive"), do: boolean(d, "passive", :required), else: {:ok, false}

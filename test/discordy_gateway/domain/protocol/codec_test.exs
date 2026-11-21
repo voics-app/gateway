@@ -152,8 +152,17 @@ defmodule DiscordyGateway.Domain.Protocol.CodecTest do
                self_mute: true,
                self_deaf: false,
                self_video: false,
-               self_stream: false
+               self_stream: false,
+               request_to_speak: :unchanged
              }
+
+      assert {:ok, {:voice_state_update, %{request_to_speak: "2026-11-20T01:00:00Z"}}} =
+               Codec.decode_inbound(
+                 frame(4, Map.put(d, "request_to_speak_timestamp", "2026-11-20T01:00:00Z"))
+               )
+
+      invalid = frame(4, Map.put(d, "request_to_speak_timestamp", "now"))
+      assert Codec.decode_inbound(invalid) == {:error, 4002}
 
       leave = %{
         "guild_id" => nil,

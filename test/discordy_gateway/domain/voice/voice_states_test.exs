@@ -71,7 +71,8 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStatesTest do
              "self_mute" => false,
              "self_video" => false,
              "self_stream" => false,
-             "suppress" => false
+             "suppress" => false,
+             "request_to_speak_timestamp" => nil
            }
 
     left = VoiceStates.left_payload(VoiceStates.get(states, "u1"), "g1")
@@ -86,5 +87,41 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStatesTest do
     states = VoiceStates.set_e2ee(states, "u1", true)
     assert {:updated, states} = VoiceStates.update(states, "u1", "s1", req("c1", self_mute: true))
     assert VoiceStates.get(states, "u1").e2ee == true
+  end
+
+  test "guarded stage joins start suppressed and cannot self-promote" do
+    request = Map.put(req("stage"), :guarded_publish, true)
+    {_, states} = VoiceStates.update(fresh(), "u1", "s1", request)
+    assert %{guarded_publish: true, suppress: true} = VoiceStates.get(states, "u1")
+    assert VoiceStates.to_payload(VoiceStates.get(states, "u1"), "g1")["suppress"]
+    {_, states} = VoiceStates.update(states, "u1", "s1", Map.put(request, :suppress, false))
+    assert VoiceStates.get(states, "u1").suppress
+    {_, states} = VoiceStates.update(states, "u1", "s1", req("ordinary"))
+    refute VoiceStates.get(states, "u1").suppress
+  end
+
+  test "an audience hand raise survives ordinary state updates and promotion clears it" do
+    request =
+      req("stage")
+      |> Map.put(:guarded_publish, true)
+      |> Map.put(:request_to_speak, "2026-11-20T01:00:00Z")
+
+    {_, states} = VoiceStates.update(fresh(), "u1", "s1", request)
+    assert VoiceStates.get(states, "u1").request_to_speak_timestamp == "2026-11-20T01:00:00Z"
+
+    {_, states} =
+      VoiceStates.update(states, "u1", "s1", Map.put(request, :request_to_speak, :unchanged))
+
+    assert VoiceStates.get(states, "u1").request_to_speak_timestamp == "2026-11-20T01:00:00Z"
+    states = VoiceStates.set_suppress(states, "u1", false)
+    assert %{suppress: false, request_to_speak_timestamp: nil} = VoiceStates.get(states, "u1")
+  end
+
+  test "server-authorized stage host can start as a speaker" do
+    request = req("stage") |> Map.put(:guarded_publish, true) |> Map.put(:stage_host, true)
+    {_, states} = VoiceStates.update(fresh(), "host", "s1", request)
+    refute VoiceStates.get(states, "host").suppress
+    states = VoiceStates.set_suppress(states, "host", true)
+    assert VoiceStates.get(states, "host").suppress
   end
 end

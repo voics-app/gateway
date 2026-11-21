@@ -58,6 +58,17 @@ defmodule DiscordyGateway.Interface.Router do
     conn |> InternalAuth.call([]) |> maybe(fn conn -> json(conn, 200, Stats.snapshot()) end)
   end
 
+  get "/internal/v1/voice/guilds/:guild_id/channels/:channel_id/members/:user_id/publish-permissions" do
+    conn
+    |> InternalAuth.call([])
+    |> maybe(fn conn ->
+      case Guild.publish_permissions(guild_id, channel_id, user_id) do
+        {:ok, grant} -> json(conn, 200, grant)
+        :unavailable -> json(conn, 503, %{"error" => "capability_unavailable"})
+      end
+    end)
+  end
+
   get "/internal/v1/guilds/:guild_id/channels/:channel_id/voice-members/:user_id" do
     conn
     |> InternalAuth.call([])

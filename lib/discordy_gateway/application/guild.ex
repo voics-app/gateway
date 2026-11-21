@@ -11,10 +11,11 @@ defmodule DiscordyGateway.Application.Guild do
   use GenServer, restart: :temporary
 
   alias DiscordyGateway.Application.{Dispatch, Ids, Pipeline, Ports, Settings}
-  alias DiscordyGateway.Application.Voice.{ActivityReporter, Effects, Room}
+  alias DiscordyGateway.Application.Voice.{ActivityReporter, CapabilitySession, Effects, Room}
   alias DiscordyGateway.Domain.Events.EventEnvelope
   alias DiscordyGateway.Domain.{Fanout, GuildState, Intents, Permissions, Presence, Subscriber}
-  alias DiscordyGateway.Domain.Voice.{VoiceStates, VoiceTokenClaims}
+  alias DiscordyGateway.Domain.Voice.{Capabilities, VoiceNode, VoiceStates, VoiceTokenClaims}
+  alias DiscordyGateway.Infrastructure.Http.VoiceControl
 
   @create_member_cap 1_000
   @chunk_size 1_000
@@ -50,6 +51,17 @@ defmodule DiscordyGateway.Application.Guild do
   @spec event(String.t(), EventEnvelope.t()) :: :ok | :not_running
   def event(guild_id, %EventEnvelope{} = envelope),
     do: cast(guild_id, {:event, envelope, System.monotonic_time()})
+
+  @doc "Returns a fresh, acknowledged stage publication snapshot for a current member."
+  @spec publish_permissions(String.t(), String.t(), String.t()) :: {:ok, map()} | :unavailable
+  def publish_permissions(guild_id, channel_id, user_id) do
+    case Ports.server_directory().lookup({:guild, guild_id}) do
+      {:ok, pid} -> GenServer.call(pid, {:publish_permissions, channel_id, user_id}, 2_000)
+      _ -> :unavailable
+    end
+  catch
+    :exit, _ -> :unavailable
+  end
 
   @spec presence(String.t(), map()) :: :ok | :not_running
   def presence(guild_id, payload), do: cast(guild_id, {:presence, payload})
@@ -121,6 +133,9 @@ defmodule DiscordyGateway.Application.Guild do
        cache: nil,
        subs: %{},
        room: Room.new(id, id),
+       capabilities: %{},
+       stage_changes: %{},
+       stage_speakers: MapSet.new(),
        idle: nil,
        voice_generations: %{}
      }, {:continue, :load}}
@@ -135,6 +150,39 @@ defmodule DiscordyGateway.Application.Guild do
   end
 
   @impl true
+  def handle_call({:publish_permissions, channel_id, user_id}, _from, state) do
+    result =
+      with %{channel_id: ^channel_id, guarded_publish: true} = voice <-
+             VoiceStates.get(state.room.states, user_id),
+           true <- GuildState.member?(state.cache, user_id),
+           %{pid: pid} <- Map.get(state.capabilities, voice.session_id),
+           {:ok, grant} when is_map(grant) <- CapabilitySession.current(pid),
+           bits <-
+             GuildState.channel_permissions(
+               state.cache,
+               user_id,
+               channel_id,
+               System.os_time(:millisecond)
+             ),
+           expected <- Capabilities.permissions(bits, voice.suppress),
+           true <- Map.take(grant, Map.keys(expected)) == expected,
+           true <- grant["session_id"] == voice.session_id do
+        {:ok,
+         Map.take(grant, [
+           "session_id",
+           "revision",
+           "expires_at",
+           "can_publish_audio",
+           "can_publish_video",
+           "can_publish_soundboard"
+         ])}
+      else
+        _ -> :unavailable
+      end
+
+    {:reply, result, state}
+  end
+
   def handle_call({:visible_channels, pid, channel_ids}, _from, state) do
     visible =
       case Map.fetch(state.subs, pid) do
@@ -166,7 +214,11 @@ defmodule DiscordyGateway.Application.Guild do
 
   def handle_cast({:event, envelope, queued_at}, state) do
     Pipeline.since(:guild_queue, queued_at)
-    handle_event(envelope, state)
+
+    case handle_event(envelope, state) do
+      {:noreply, next} -> {:noreply, refresh_stage_capabilities(next)}
+      other -> other
+    end
   end
 
   def handle_cast({:presence, payload}, state) do
@@ -202,8 +254,26 @@ defmodule DiscordyGateway.Application.Guild do
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, state),
-    do: {:noreply, drop_subscriber(state, pid)}
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+    case Enum.find(state.capabilities, fn {_id, cap} -> cap.ref == ref and cap.pid == pid end) do
+      {session_id, _cap} -> {:noreply, remove_voice_session(state, session_id)}
+      nil -> {:noreply, drop_subscriber(state, pid)}
+    end
+  end
+
+  def handle_info({:voice_capability_failed, session_id, _reason}, state),
+    do: {:noreply, remove_voice_session(state, session_id)}
+
+  def handle_info({:voice_capability_applied, session_id, update}, state) do
+    case Map.pop(state.stage_changes, session_id) do
+      {nil, _remaining} ->
+        {:noreply, state}
+
+      {%{user_id: user_id, suppress: suppress}, remaining} ->
+        state = %{state | stage_changes: remaining}
+        {:noreply, finish_stage_change(state, session_id, user_id, suppress, update)}
+    end
+  end
 
   def handle_info(:idle_check, %{subs: subs} = state) when map_size(subs) == 0,
     do: {:stop, :normal, state}
@@ -222,6 +292,9 @@ defmodule DiscordyGateway.Application.Guild do
   end
 
   def handle_info({:voice_node_gone, node_id}, state) do
+    state =
+      if state.room.node_id == node_id, do: remove_guarded_sessions(state), else: state
+
     {room, effects} =
       Room.node_gone(state.room, node_id, fn id -> Ports.session_directory().whereis(id) end)
 
@@ -350,9 +423,21 @@ defmodule DiscordyGateway.Application.Guild do
 
   ## Events
 
-  # Bus-only (api#24): a moderator moved or disconnected a member. Never fanned out to clients.
-  defp handle_event(%EventEnvelope{type: "VOICE_MEMBER_MOVE", data: data}, state),
-    do: {:noreply, move_member(state, data["user_id"], data["channel_id"])}
+  # Bus-only (api#24/voice#9): a moderator moved/disconnected a member or changed their stage
+  # speaker status. Never fanned out directly; clients observe the authoritative voice state.
+  defp handle_event(%EventEnvelope{type: "VOICE_MEMBER_MOVE", data: data}, state) do
+    state =
+      if Map.has_key?(data, "channel_id"),
+        do: move_member(state, data["user_id"], data["channel_id"]),
+        else: state
+
+    state =
+      if is_boolean(data["suppress"]),
+        do: moderate_stage_member(state, data["user_id"], data["suppress"]),
+        else: state
+
+    {:noreply, state}
+  end
 
   # Bus-only (api#52): asks the messages service to purge a banned user's recent messages. The
   # clients learn about it through MESSAGE_DELETE_BULK; this event is never fanned out.
@@ -502,8 +587,10 @@ defmodule DiscordyGateway.Application.Guild do
     now = System.os_time(:millisecond)
     permissions = GuildState.channel_permissions(state.cache, sub.user_id, channel_id, now)
 
-    if GuildState.voice_channel?(state.cache, channel_id) and
-         Permissions.has?(permissions, :connect) do
+    if supported_voice_channel?(state.cache, channel_id) and
+         Permissions.has?(permissions, :connect) and
+         (not stage_channel?(state.cache, channel_id) or
+            Permissions.has?(permissions, :view_channel)) do
       apply_voice(state, sub, request, join_opts(state, channel_id))
     else
       Dispatch.to_sessions(
@@ -515,6 +602,12 @@ defmodule DiscordyGateway.Application.Guild do
       state
     end
   end
+
+  defp supported_voice_channel?(cache, channel_id),
+    do: match?(%{"type" => type} when type in [2, 13], GuildState.channel(cache, channel_id))
+
+  defp stage_channel?(cache, channel_id),
+    do: match?(%{"type" => 13}, GuildState.channel(cache, channel_id))
 
   defp join_opts(state, channel_id) do
     %{
@@ -533,7 +626,7 @@ defmodule DiscordyGateway.Application.Guild do
   defp move_member(state, user_id, target) do
     with %{} = current <- VoiceStates.get(state.room.states, user_id),
          {:ok, sub} <- subscriber_by_session(state, current.session_id),
-         true <- target == nil or GuildState.voice_channel?(state.cache, target),
+         true <- target == nil or supported_voice_channel?(state.cache, target),
          true <- target != current.channel_id do
       request = %{
         guild_id: state.id,
@@ -551,6 +644,29 @@ defmodule DiscordyGateway.Application.Guild do
     end
   end
 
+  defp moderate_stage_member(state, user_id, suppress) do
+    with %{guarded_publish: true} = voice <- VoiceStates.get(state.room.states, user_id),
+         true <- voice.suppress != suppress,
+         %{pid: pid} <- Map.get(state.capabilities, voice.session_id) do
+      bits =
+        GuildState.channel_permissions(
+          state.cache,
+          voice.user_id,
+          voice.channel_id,
+          System.os_time(:millisecond)
+        )
+
+      CapabilitySession.update(pid, bits, suppress)
+
+      put_in(state.stage_changes[voice.session_id], %{
+        user_id: voice.user_id,
+        suppress: suppress
+      })
+    else
+      _ -> state
+    end
+  end
+
   defp subscriber_by_session(state, session_id) do
     state.subs
     |> Map.values()
@@ -560,14 +676,61 @@ defmodule DiscordyGateway.Application.Guild do
   end
 
   defp apply_voice(state, sub, request, opts) do
+    guarded = stage_channel?(state.cache, request.channel_id)
+
+    bits =
+      if guarded,
+        do:
+          GuildState.channel_permissions(
+            state.cache,
+            sub.user_id,
+            request.channel_id,
+            System.os_time(:millisecond)
+          ),
+        else: 0
+
+    host = guarded and Permissions.has?(bits, :manage_channels) and Permissions.has?(bits, :speak)
+    request = request |> Map.put(:guarded_publish, guarded) |> Map.put(:stage_host, host)
+    previous = VoiceStates.get(state.room.states, sub.user_id)
     {room, effects} = Room.update(state.room, member(sub), request, opts)
-    Effects.run(effects, &broadcast_voice_state(state, &1, &2))
-    activity_transition(state, room)
+
+    if guarded and not trusted_stage_node?(room) do
+      if previous == nil, do: Room.remove_session(room, sub.session_id)
+
+      Dispatch.to_sessions(
+        [sub.pid],
+        "VOICE_STATE_UPDATE",
+        with_member(state, Room.rejected_payload(state.room, member(sub), request))
+      )
+
+      state
+    else
+      state =
+        if previous && previous.channel_id != request.channel_id,
+          do: stop_capability(state, previous.session_id),
+          else: state
+
+      Effects.run(effects, &broadcast_voice_state(state, &1, &2))
+      state |> activity_transition(room) |> refresh_stage_capabilities()
+    end
   end
+
+  defp trusted_stage_node?(%{node_id: node_id}) when is_binary(node_id) do
+    with {:ok, node} <- Ports.voice_nodes().get_node(node_id),
+         %{lease: lease} <- VoiceNode.validated_control(node),
+         {lease_id, ""} when lease_id > 0 <- Integer.parse(lease) do
+      true
+    else
+      _ -> false
+    end
+  end
+
+  defp trusted_stage_node?(_room), do: false
 
   defp remove_voice_session(state, nil), do: state
 
   defp remove_voice_session(state, session_id) do
+    state = stop_capability(state, session_id)
     {room, effects} = Room.remove_session(state.room, session_id)
     Effects.run(effects, &broadcast_voice_state(state, &1, &2))
     activity_transition(state, room)
@@ -609,6 +772,130 @@ defmodule DiscordyGateway.Application.Guild do
       "observed_at" => observed_at,
       "connected" => connected
     })
+  end
+
+  defp stop_capability(state, session_id) do
+    case Map.pop(state.capabilities, session_id) do
+      {nil, _} ->
+        state
+
+      {%{pid: pid, ref: ref}, remaining} ->
+        Process.demonitor(ref, [:flush])
+        if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+
+        %{
+          state
+          | capabilities: remaining,
+            stage_changes: Map.delete(state.stage_changes, session_id),
+            stage_speakers: MapSet.delete(state.stage_speakers, session_id)
+        }
+    end
+  end
+
+  defp remove_guarded_sessions(state) do
+    Enum.reduce(VoiceStates.all(state.room.states), state, fn voice, acc ->
+      if voice.guarded_publish, do: remove_voice_session(acc, voice.session_id), else: acc
+    end)
+  end
+
+  defp finish_stage_change(state, session_id, user_id, suppress, update) do
+    case VoiceStates.get(state.room.states, user_id) do
+      %{session_id: ^session_id, guarded_publish: true}
+      when :erlang.map_get("can_publish_audio", update) == not suppress ->
+        states = VoiceStates.set_suppress(state.room.states, user_id, suppress)
+        voice = VoiceStates.get(states, user_id)
+
+        speakers =
+          if suppress,
+            do: MapSet.delete(state.stage_speakers, session_id),
+            else: MapSet.put(state.stage_speakers, session_id)
+
+        state = %{state | room: %{state.room | states: states}, stage_speakers: speakers}
+        broadcast_voice_state(state, VoiceStates.to_payload(voice, state.id), voice.channel_id)
+        refresh_stage_capabilities(state)
+
+      _ ->
+        remove_voice_session(state, session_id)
+    end
+  end
+
+  defp refresh_stage_capabilities(state) do
+    Enum.reduce(VoiceStates.all(state.room.states), state, fn voice, acc ->
+      if voice.guarded_publish,
+        do: refresh_stage_member(acc, voice),
+        else: stop_capability(acc, voice.session_id)
+    end)
+  end
+
+  defp refresh_stage_member(state, voice) do
+    bits =
+      GuildState.channel_permissions(
+        state.cache,
+        voice.user_id,
+        voice.channel_id,
+        System.os_time(:millisecond)
+      )
+
+    {state, voice} = demote_unqualified_speaker(state, voice, bits)
+
+    cond do
+      not Permissions.has?(bits, :view_channel) or not Permissions.has?(bits, :connect) ->
+        remove_voice_session(state, voice.session_id)
+
+      cap = Map.get(state.capabilities, voice.session_id) ->
+        CapabilitySession.update(cap.pid, bits, pending_suppress(state, voice))
+        state
+
+      true ->
+        start_stage_capability(state, voice, bits)
+    end
+  end
+
+  defp pending_suppress(state, voice) do
+    case Map.get(state.stage_changes, voice.session_id) do
+      %{suppress: pending} -> pending
+      nil -> voice.suppress
+    end
+  end
+
+  defp demote_unqualified_speaker(state, voice, bits) do
+    qualified =
+      voice.suppress or MapSet.member?(state.stage_speakers, voice.session_id) or
+        (Permissions.has?(bits, :manage_channels) and Permissions.has?(bits, :speak))
+
+    if qualified do
+      {state, voice}
+    else
+      states = VoiceStates.set_suppress(state.room.states, voice.user_id, true)
+      voice = VoiceStates.get(states, voice.user_id)
+      state = %{state | room: %{state.room | states: states}}
+      broadcast_voice_state(state, VoiceStates.to_payload(voice, state.id), voice.channel_id)
+      {state, voice}
+    end
+  end
+
+  defp start_stage_capability(state, voice, bits) do
+    with {:ok, node} <- Ports.voice_nodes().get_node(state.room.node_id),
+         %{lease: lease} <- VoiceNode.validated_control(node),
+         {lease_id, ""} <- Integer.parse(lease),
+         {:ok, pid} <-
+           CapabilitySession.start_link(
+             owner: self(),
+             node: node,
+             resolve_node: fn -> Ports.voice_nodes().get_node(node.node_id) end,
+             session_id: voice.session_id,
+             registration_lease: lease_id,
+             control:
+               Application.get_env(:discordy_gateway, :voice_capability_control, VoiceControl),
+             permissions: bits,
+             suppressed: voice.suppress
+           ) do
+      Process.unlink(pid)
+      ref = Process.monitor(pid)
+      put_in(state.capabilities[voice.session_id], %{pid: pid, ref: ref})
+    else
+      _ -> remove_voice_session(state, voice.session_id)
+    end
   end
 
   defp broadcast_voice_state(state, payload, gate_channel_id),

@@ -6,6 +6,7 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
   alias DiscordyGateway.Application.Ports
   alias DiscordyGateway.Application.Voice.{ActivityReporter, Allocator, DrainNode, NodeMonitor}
   alias DiscordyGateway.Fixtures
+  alias DiscordyGateway.Interface.Router
 
   defp publish(topic, type, data, fields) do
     envelope =
@@ -21,6 +22,38 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
       )
 
     Ingest.handle(topic, Jason.encode!(envelope))
+  end
+
+  defmodule StageControl do
+    def apply(_node, _session_id, update), do: {:ok, update}
+  end
+
+  defp await_capability(guild, channel, user, attempts \\ 100) do
+    case Guild.publish_permissions(guild, channel, user) do
+      {:ok, grant} ->
+        grant
+
+      :unavailable when attempts > 0 ->
+        Process.sleep(20)
+        await_capability(guild, channel, user, attempts - 1)
+
+      :unavailable ->
+        flunk("capability did not become available")
+    end
+  end
+
+  defp await_capability_after(guild, channel, user, revision, attempts \\ 100) do
+    case Guild.publish_permissions(guild, channel, user) do
+      {:ok, %{"revision" => current} = grant} when current > revision ->
+        grant
+
+      _ when attempts > 0 ->
+        Process.sleep(20)
+        await_capability_after(guild, channel, user, revision, attempts - 1)
+
+      _ ->
+        flunk("capability revision did not advance")
+    end
   end
 
   defp setup_guild(gid) do
@@ -358,6 +391,158 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
       )
 
       Process.sleep(30)
+    end
+
+    test "stage audience gets a guarded acknowledged deny and membership lookup closes on leave" do
+      setup_guild("stage-guarded")
+      previous = Application.get_env(:discordy_gateway, :voice_capability_control)
+      Application.put_env(:discordy_gateway, :voice_capability_control, StageControl)
+
+      on_exit(fn ->
+        if previous,
+          do: Application.put_env(:discordy_gateway, :voice_capability_control, previous),
+          else: Application.delete_env(:discordy_gateway, :voice_capability_control)
+      end)
+
+      node =
+        voice_node("a",
+          region: "us-east",
+          control_endpoint: %{ip: "10.42.0.8", port: 4100, lease: "123"}
+        )
+
+      Fakes.put(:voice_nodes, [node])
+      alice = online_in("stage-guarded", "2")
+
+      publish(
+        :guild,
+        "CHANNEL_CREATE",
+        %{
+          "id" => "14",
+          "type" => 13,
+          "name" => "stage",
+          "voice_region" => "us-east",
+          "guild_id" => "stage-guarded"
+        },
+        %{"guild_id" => "stage-guarded"}
+      )
+
+      Process.sleep(30)
+      join(alice, "stage-guarded", "14")
+
+      assert %{"channel_id" => "14", "suppress" => true, "session_id" => session_id} =
+               await(alice, "VOICE_STATE_UPDATE")
+
+      assert %{"channel_id" => "14"} = await(alice, "VOICE_SERVER_UPDATE")
+      grant = await_capability("stage-guarded", "14", "2")
+      assert grant["session_id"] == session_id
+      assert grant["can_publish_audio"] == false
+      assert grant["can_publish_video"] == false
+      assert grant["can_publish_soundboard"] == false
+      assert grant["expires_at"] > System.os_time(:millisecond)
+
+      send_frame(alice.session, 4, %{
+        "guild_id" => "stage-guarded",
+        "channel_id" => "14",
+        "self_mute" => true,
+        "self_deaf" => false,
+        "request_to_speak_timestamp" => "2026-11-20T01:00:00Z"
+      })
+
+      assert %{
+               "user_id" => "2",
+               "suppress" => true,
+               "request_to_speak_timestamp" => "2026-11-20T01:00:00Z"
+             } = await(alice, "VOICE_STATE_UPDATE")
+
+      publish(
+        :guild,
+        "VOICE_MEMBER_MOVE",
+        %{"guild_id" => "stage-guarded", "user_id" => "2", "suppress" => false},
+        %{"guild_id" => "stage-guarded"}
+      )
+
+      assert %{
+               "user_id" => "2",
+               "suppress" => false,
+               "request_to_speak_timestamp" => nil
+             } = await(alice, "VOICE_STATE_UPDATE")
+
+      promoted = await_capability_after("stage-guarded", "14", "2", grant["revision"])
+      assert promoted["can_publish_audio"] == true
+      assert promoted["revision"] > grant["revision"]
+      path = "/internal/v1/voice/guilds/stage-guarded/channels/14/members/2/publish-permissions"
+
+      request =
+        Plug.Test.conn(:get, path)
+        |> Plug.Conn.put_req_header("x-internal-token", "test-internal-token")
+
+      response =
+        Router.call(request, Router.init([]))
+
+      assert response.status == 200
+      assert Jason.decode!(response.resp_body) == promoted
+
+      assert Router.call(
+               Plug.Test.conn(:get, path),
+               Router.init([])
+             ).status == 401
+
+      assert :unavailable =
+               Guild.publish_permissions("stage-guarded", "14", "3")
+
+      publish(
+        :guild,
+        "VOICE_MEMBER_MOVE",
+        %{"guild_id" => "stage-guarded", "user_id" => "2", "suppress" => true},
+        %{"guild_id" => "stage-guarded"}
+      )
+
+      assert %{"user_id" => "2", "suppress" => true} = await(alice, "VOICE_STATE_UPDATE")
+      revoked = await_capability_after("stage-guarded", "14", "2", promoted["revision"])
+      assert revoked["can_publish_audio"] == false
+
+      leave(alice, "stage-guarded")
+      await_left(alice)
+
+      assert :unavailable =
+               Guild.publish_permissions("stage-guarded", "14", "2")
+
+      host = online_in("stage-guarded", "1")
+      join(host, "stage-guarded", "14")
+      assert %{"channel_id" => "14", "suppress" => false} = await_in(host, "14")
+      assert %{"channel_id" => "14"} = await(host, "VOICE_SERVER_UPDATE")
+      host_grant = await_capability("stage-guarded", "14", "1")
+      assert host_grant["can_publish_audio"] == true
+      assert host_grant["expires_at"] > System.os_time(:millisecond)
+    end
+
+    test "stage joins and moderator moves are refused until audience enforcement exists" do
+      setup_guild("stage-closed")
+      Fakes.put(:voice_nodes, [voice_node("a", region: "us-east")])
+      alice = online_in("stage-closed", "2")
+      bob = online_in("stage-closed", "3")
+
+      publish(
+        :guild,
+        "CHANNEL_CREATE",
+        %{"id" => "14", "type" => 13, "name" => "stage", "guild_id" => "stage-closed"},
+        %{"guild_id" => "stage-closed"}
+      )
+
+      Process.sleep(30)
+      join(alice, "stage-closed", "14")
+      assert %{"channel_id" => nil} = await(alice, "VOICE_STATE_UPDATE")
+      assert :none = await(alice, "VOICE_SERVER_UPDATE", 100)
+      join(alice, "stage-closed", "12")
+      await(alice, "VOICE_SERVER_UPDATE")
+      await(bob, "VOICE_STATE_UPDATE")
+      moderate("stage-closed", "2", "14")
+
+      refute_receive {:client, "3",
+                      %{"t" => "VOICE_STATE_UPDATE", "d" => %{"channel_id" => "14"}}},
+                     150
+
+      assert :none = await(alice, "VOICE_SERVER_UPDATE", 100)
     end
 
     test "a move re-homes the member to the target channel with a fresh token" do

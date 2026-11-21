@@ -248,7 +248,8 @@ defmodule DiscordyGateway.Application.Voice.Room do
           server_id: room.server_id,
           channel_id: state.channel_id,
           node_id: node.node_id,
-          e2ee: e2ee
+          e2ee: e2ee,
+          guarded_publish: Map.get(state, :guarded_publish, false)
         },
         div(System.os_time(:millisecond), 1000)
       )

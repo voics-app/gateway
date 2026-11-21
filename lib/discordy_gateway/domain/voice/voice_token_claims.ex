@@ -24,7 +24,13 @@ defmodule DiscordyGateway.Domain.Voice.VoiceTokenClaims do
       "iat" => now_s,
       "exp" => now_s + Contracts.voice_token_ttl_s()
     }
+    |> maybe_guarded(grant)
   end
+
+  defp maybe_guarded(claims, %{guarded_publish: true}),
+    do: Map.put(claims, "guarded_publish", true)
+
+  defp maybe_guarded(claims, _grant), do: claims
 
   @doc "Media E2EE is always on in ephemeral and p2p chats and opt-in (channel `e2ee`) otherwise."
   @spec e2ee_for(map()) :: boolean()
