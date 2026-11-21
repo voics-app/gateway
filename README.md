@@ -127,7 +127,7 @@ cp .env.example .env     # JWT_PUBLIC_KEY must be the public half of the api's J
 make dev
 ```
 
-or run the image: `make docker && docker run --env-file .env -p 4000:4000 ghcr.io/discordy-voics/gateway:dev`.
+or run the image: `make docker && docker run --env-file .env -p 4000:4000 ghcr.io/voics-app/gateway:dev`.
 
 ## Test
 
