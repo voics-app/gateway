@@ -220,3 +220,5 @@ remain JSON text. Unknown compression values are rejected. OTP 29 is required.
 
 Run `mix run --no-start bench/compression.exs` to compare event bytes in a sample stream.
 This is a small illustrative payload, not a production bandwidth measurement.
+
+Guild sticker updates (`GUILD_STICKERS_UPDATE`) use the guild expressions intent, alongside emoji updates (api#33).
