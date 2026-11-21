@@ -184,24 +184,21 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
   end
 
   defp request_to_speak(d) do
-    if Map.has_key?(d, "request_to_speak_timestamp") do
-      case Map.get(d, "request_to_speak_timestamp") do
-        nil ->
-          {:ok, nil}
+    if Map.has_key?(d, "request_to_speak_timestamp"),
+      do: speak_timestamp(Map.get(d, "request_to_speak_timestamp")),
+      else: {:ok, :unchanged}
+  end
 
-        value when is_binary(value) and value != "" ->
-          case DateTime.from_iso8601(value) do
-            {:ok, _datetime, _offset} -> {:ok, value}
-            _ -> {:error, {:invalid, "request_to_speak_timestamp"}}
-          end
+  defp speak_timestamp(nil), do: {:ok, nil}
 
-        _ ->
-          {:error, {:invalid, "request_to_speak_timestamp"}}
-      end
-    else
-      {:ok, :unchanged}
+  defp speak_timestamp(value) when is_binary(value) and value != "" do
+    case DateTime.from_iso8601(value) do
+      {:ok, _datetime, _offset} -> {:ok, value}
+      _ -> {:error, {:invalid, "request_to_speak_timestamp"}}
     end
   end
+
+  defp speak_timestamp(_value), do: {:error, {:invalid, "request_to_speak_timestamp"}}
 
   defp optional_passive(d) do
     if Map.has_key?(d, "passive"), do: boolean(d, "passive", :required), else: {:ok, false}

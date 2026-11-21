@@ -64,27 +64,30 @@ defmodule DiscordyGateway.Domain.Voice.VoiceStates do
     previous = Map.get(states, user_id)
 
     if Map.get(request, :guarded_publish, false) do
-      case Map.get(request, :request_to_speak, :unchanged) do
-        :unchanged ->
-          case previous do
-            %{session_id: ^session_id, channel_id: channel, request_to_speak_timestamp: timestamp}
-            when channel == request.channel_id ->
-              timestamp
-
-            _ ->
-              nil
-          end
-
-        timestamp when is_binary(timestamp) ->
-          timestamp
-
-        nil ->
-          nil
-      end
-    else
-      nil
+      stage_timestamp(
+        Map.get(request, :request_to_speak, :unchanged),
+        previous,
+        session_id,
+        request
+      )
     end
   end
+
+  defp stage_timestamp(:unchanged, previous, session_id, request) do
+    case previous do
+      %{session_id: ^session_id, channel_id: channel, request_to_speak_timestamp: timestamp}
+      when channel == request.channel_id ->
+        timestamp
+
+      _ ->
+        nil
+    end
+  end
+
+  defp stage_timestamp(timestamp, _previous, _session_id, _request) when is_binary(timestamp),
+    do: timestamp
+
+  defp stage_timestamp(nil, _previous, _session_id, _request), do: nil
 
   defp stage_suppressed(states, user_id, session_id, request) do
     if Map.get(request, :guarded_publish, false) do

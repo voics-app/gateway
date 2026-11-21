@@ -2,9 +2,11 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
   use DiscordyGateway.Case, async: false
 
   alias DiscordyGateway.Application.Events.Ingest
+  alias DiscordyGateway.Application.Guild
   alias DiscordyGateway.Application.Ports
   alias DiscordyGateway.Application.Voice.{Allocator, DrainNode, NodeMonitor}
   alias DiscordyGateway.Fixtures
+  alias DiscordyGateway.Interface.Router
 
   defp publish(topic, type, data, fields) do
     envelope =
@@ -27,7 +29,7 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
   end
 
   defp await_capability(guild, channel, user, attempts \\ 100) do
-    case DiscordyGateway.Application.Guild.publish_permissions(guild, channel, user) do
+    case Guild.publish_permissions(guild, channel, user) do
       {:ok, grant} ->
         grant
 
@@ -41,7 +43,7 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
   end
 
   defp await_capability_after(guild, channel, user, revision, attempts \\ 100) do
-    case DiscordyGateway.Application.Guild.publish_permissions(guild, channel, user) do
+    case Guild.publish_permissions(guild, channel, user) do
       {:ok, %{"revision" => current} = grant} when current > revision ->
         grant
 
@@ -430,18 +432,18 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
         |> Plug.Conn.put_req_header("x-internal-token", "test-internal-token")
 
       response =
-        DiscordyGateway.Interface.Router.call(request, DiscordyGateway.Interface.Router.init([]))
+        Router.call(request, Router.init([]))
 
       assert response.status == 200
       assert Jason.decode!(response.resp_body) == promoted
 
-      assert DiscordyGateway.Interface.Router.call(
+      assert Router.call(
                Plug.Test.conn(:get, path),
-               DiscordyGateway.Interface.Router.init([])
+               Router.init([])
              ).status == 401
 
       assert :unavailable =
-               DiscordyGateway.Application.Guild.publish_permissions("stage-guarded", "14", "3")
+               Guild.publish_permissions("stage-guarded", "14", "3")
 
       publish(
         :guild,
@@ -458,7 +460,7 @@ defmodule DiscordyGateway.Application.VoiceFlowTest do
       await_left(alice)
 
       assert :unavailable =
-               DiscordyGateway.Application.Guild.publish_permissions("stage-guarded", "14", "2")
+               Guild.publish_permissions("stage-guarded", "14", "2")
 
       host = online_in("stage-guarded", "1")
       join(host, "stage-guarded", "14")
