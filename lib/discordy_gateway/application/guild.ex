@@ -155,6 +155,9 @@ defmodule DiscordyGateway.Application.Guild do
     {:reply, visible, state}
   end
 
+  def handle_call({:user_in_voice?, channel_id, user_id}, _from, state),
+    do: {:reply, Room.user_in_channel?(state.room, user_id, channel_id), state}
+
   @impl true
   def handle_cast({:join, %Subscriber{} = sub}, state),
     do: {:noreply, join_subscriber(state, sub)}
@@ -197,10 +200,6 @@ defmodule DiscordyGateway.Application.Guild do
 
     {:noreply, state}
   end
-
-  @impl true
-  def handle_call({:user_in_voice?, channel_id, user_id}, _from, state),
-    do: {:reply, Room.user_in_channel?(state.room, user_id, channel_id), state}
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _reason}, state),

@@ -44,7 +44,7 @@ defmodule DiscordyGateway.Application.Voice.ActivityReporter do
       {:value, checkpoint} ->
         owner = self()
 
-        task =
+        {:ok, _pid} =
           Task.start(fn ->
             result =
               try do
@@ -58,14 +58,7 @@ defmodule DiscordyGateway.Application.Voice.ActivityReporter do
             send(owner, {:delivered, result})
           end)
 
-        case task do
-          {:ok, _pid} ->
-            {:noreply, %{state | busy: true}}
-
-          {:error, _reason} ->
-            Process.send_after(self(), :flush, @retry_ms)
-            {:noreply, state}
-        end
+        {:noreply, %{state | busy: true}}
     end
   end
 
