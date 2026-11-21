@@ -95,6 +95,22 @@ defmodule DiscordyGateway.Domain.GuildState do
         role_permissions: Map.delete(state.role_permissions, id)
     }
 
+  def apply_event(state, "MESSAGE_CREATE", %{"channel_id" => channel_id, "id" => id})
+      when is_binary(id) do
+    channels =
+      Map.update(state.channels, channel_id, nil, fn channel ->
+        old = channel["last_message_id"]
+
+        if old == nil or newer_id?(id, old),
+          do: Map.put(channel, "last_message_id", id),
+          else: channel
+      end)
+
+    if channels[channel_id] == nil,
+      do: state,
+      else: %{state | channels: channels}
+  end
+
   def apply_event(state, "GUILD_MEMBER_ADD", data),
     do: put_member(state, Map.delete(data, "guild_id"))
 
@@ -246,6 +262,13 @@ defmodule DiscordyGateway.Domain.GuildState do
   def members_by_ids(state, ids) do
     {found, missing} = Enum.split_with(ids, &Map.has_key?(state.members, &1))
     {Enum.map(found, &Map.fetch!(state.members, &1)), missing}
+  end
+
+  defp newer_id?(id, old) do
+    with {id, ""} <- Integer.parse(id),
+         {old, ""} <- Integer.parse(old),
+         do: id > old,
+         else: (_ -> false)
   end
 
   defp put_role(state, %{"id" => id} = role) do

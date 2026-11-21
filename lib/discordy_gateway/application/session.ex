@@ -21,12 +21,13 @@ defmodule DiscordyGateway.Application.Session do
   alias DiscordyGateway.Domain.Events.EventEnvelope
   alias DiscordyGateway.Domain.Intents
   alias DiscordyGateway.Domain.Protocol.Codec
-  alias DiscordyGateway.Domain.Session.{Heartbeat, RateLimiter, ResumeReplay}
+  alias DiscordyGateway.Domain.Session.{Heartbeat, PassiveUpdates, RateLimiter, ResumeReplay}
   alias DiscordyGateway.Domain.Subscriber
 
   require Logger
 
   @presence_refresh_ms 30_000
+  @passive_interval_ms 5_000
   @rejoin_delay_ms 1_000
   @resume_call_timeout_ms 10_000
   # Inspecting another process makes the caller wait for it, so the socket backlog is read on every
@@ -50,6 +51,15 @@ defmodule DiscordyGateway.Application.Session do
     status: :connected,
     seq: 0,
     read_state_versioned: false,
+    passive: false,
+    passive_used: false,
+    passive_token: nil,
+    passive_updates: %PassiveUpdates{},
+    passive_sent: %PassiveUpdates{},
+    refreshing_guilds: MapSet.new(),
+    activation_token: nil,
+    channel_guilds: %{},
+    private_channel_ids: MapSet.new(),
     guild_ids: MapSet.new(),
     guild_refs: %{},
     friend_ids: [],
@@ -111,6 +121,13 @@ defmodule DiscordyGateway.Application.Session do
 
   @impl true
   def handle_call(
+        {:resume, _transport, user_id, _seq},
+        _from,
+        %{identity: %Identity{user_id: user_id}, passive_used: true} = state
+      ),
+      do: {:stop, :normal, {:error, :passive_requires_identify}, state}
+
+  def handle_call(
         {:resume, transport, user_id, seq},
         _from,
         %{identity: %Identity{user_id: user_id}} = state
@@ -147,11 +164,65 @@ defmodule DiscordyGateway.Application.Session do
   # Hibernating right after it compacts the heap it grew while the frame was built, so an idle
   # session holds only its small steady-state.
   @impl true
-  def handle_info({:dispatch, "GUILD_CREATE", encoded}, %{status: :identified} = state),
-    do: {:noreply, dispatch(state, "GUILD_CREATE", encoded), :hibernate}
+  def handle_info({:guild_snapshot, guild_id, token, encoded}, %{status: :identified} = state) do
+    data = Jason.decode!(encoded)
+
+    state =
+      remember_guild_channels(
+        state,
+        guild_id,
+        List.wrap(data["channels"]) ++ List.wrap(data["threads"])
+      )
+
+    cond do
+      state.passive ->
+        {:noreply, capture_guild_snapshot(state, guild_id, data), :hibernate}
+
+      MapSet.member?(state.refreshing_guilds, guild_id) and token != state.activation_token ->
+        {:noreply, state}
+
+      true ->
+        remaining = MapSet.delete(state.refreshing_guilds, guild_id)
+        token = if MapSet.size(remaining) == 0, do: nil, else: state.activation_token
+        state = %{state | refreshing_guilds: remaining, activation_token: token}
+        {:noreply, dispatch(state, "GUILD_CREATE", encoded), :hibernate}
+    end
+  end
+
+  def handle_info(
+        {:guild_dispatch, guild_id, event, encoded, gate},
+        %{status: :identified} = state
+      ) do
+    state = forget_deleted_channel(state, guild_id, event, encoded)
+
+    cond do
+      state.passive -> {:noreply, capture_guild_event(state, guild_id, event, encoded, gate)}
+      MapSet.member?(state.refreshing_guilds, guild_id) -> {:noreply, state}
+      true -> {:noreply, dispatch(state, event, encoded)}
+    end
+  end
+
+  def handle_info(
+        {:dispatch, "GUILD_DELETE", _encoded},
+        %{status: :identified, passive: true} = state
+      ),
+      do: {:noreply, state}
+
+  def handle_info(
+        {:dispatch, "GUILD_MEMBERS_CHUNK", _encoded},
+        %{status: :identified, passive: true} = state
+      ),
+      do: {:noreply, state}
 
   def handle_info({:dispatch, event, encoded}, %{status: :identified} = state),
     do: {:noreply, dispatch(state, event, encoded)}
+
+  def handle_info({:passive_flush, token}, %{passive: true, passive_token: token} = state) do
+    case flush_passive(state) do
+      {:ok, state} -> {:noreply, schedule_passive(state)}
+      :error -> close(state, :unknown_error)
+    end
+  end
 
   # SESSION_REVOKE is bus-only: it ends the connection of a login session the api revoked.
   def handle_info(
@@ -162,6 +233,19 @@ defmodule DiscordyGateway.Application.Session do
       do: close(state, :authentication_failed),
       else: {:noreply, state}
   end
+
+  def handle_info(
+        {:user_event, %EventEnvelope{type: "READ_STATE_UPDATE", data: data}},
+        %{status: :identified, passive: true} = state
+      ) do
+    {:noreply, %{state | passive_updates: PassiveUpdates.read_state(state.passive_updates, data)}}
+  end
+
+  def handle_info(
+        {:user_event, %EventEnvelope{type: "MESSAGE_ACK"}},
+        %{status: :identified, passive: true} = state
+      ),
+      do: {:noreply, state}
 
   def handle_info({:user_event, %EventEnvelope{} = envelope}, %{status: :identified} = state),
     do: {:noreply, user_event(state, envelope)}
@@ -182,8 +266,19 @@ defmodule DiscordyGateway.Application.Session do
   def handle_info({:join_guild, guild_id}, %{status: :identified} = state),
     do: {:noreply, join_guilds(state, [%{"id" => guild_id}])}
 
-  def handle_info({:join_rejected, guild_id}, state),
-    do: {:noreply, forget_guild(state, guild_id)}
+  def handle_info({:join_rejected, guild_id}, state) do
+    state =
+      if state.passive or MapSet.member?(state.refreshing_guilds, guild_id),
+        do: dispatch(state, "GUILD_DELETE", Dispatch.encode(%{"id" => guild_id})),
+        else: state
+
+    {:noreply, forget_guild(state, guild_id)}
+  end
+
+  def handle_info({:guild_gone, guild_id}, %{passive: true} = state) do
+    state = dispatch(state, "GUILD_DELETE", Dispatch.encode(%{"id" => guild_id}))
+    {:noreply, forget_guild(state, guild_id)}
+  end
 
   def handle_info({:guild_gone, guild_id}, state), do: {:noreply, forget_guild(state, guild_id)}
 
@@ -257,6 +352,61 @@ defmodule DiscordyGateway.Application.Session do
 
   def terminate(_reason, _state), do: :ok
 
+  defp flush_passive(state) do
+    requested =
+      (PassiveUpdates.permission_pairs(state.passive_updates, state.channel_guilds) ++
+         PassiveUpdates.permission_pairs(state.passive_sent, state.channel_guilds))
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+
+    allowed =
+      Map.new(requested, fn {guild_id, channels} ->
+        case Guild.visible_channels(guild_id, self(), Enum.uniq(channels)) do
+          {:ok, ids} -> {guild_id, MapSet.new(ids)}
+          :error -> throw(:permission_unavailable)
+        end
+      end)
+
+    visible = fn guild_id, channels ->
+      current = Map.get(allowed, guild_id, MapSet.new())
+      Enum.filter(channels, &MapSet.member?(current, &1))
+    end
+
+    updates =
+      state.passive_updates
+      |> PassiveUpdates.filter_visible(visible)
+      |> PassiveUpdates.filter_read_states(
+        state.channel_guilds,
+        state.private_channel_ids,
+        visible
+      )
+
+    sent =
+      state.passive_sent
+      |> PassiveUpdates.filter_visible(visible)
+      |> PassiveUpdates.filter_read_states(
+        state.channel_guilds,
+        state.private_channel_ids,
+        visible
+      )
+
+    changes = PassiveUpdates.changed(updates, sent)
+    payload = PassiveUpdates.payload(changes)
+
+    state =
+      if map_size(payload) == 0,
+        do: state,
+        else: dispatch(state, "PASSIVE_UPDATE_V2", Dispatch.encode(payload))
+
+    {:ok,
+     %{
+       state
+       | passive_updates: %PassiveUpdates{},
+         passive_sent: PassiveUpdates.merge(sent, changes)
+     }}
+  catch
+    :permission_unavailable -> :error
+  end
+
   ## Inbound frames
 
   defp decode(frame, state) do
@@ -283,6 +433,8 @@ defmodule DiscordyGateway.Application.Session do
   defp command(_cmd, _payload, %{status: :connected} = state),
     do: close(state, :not_authenticated)
 
+  defp command(:session_mode, %{passive: passive}, state), do: change_session_mode(state, passive)
+
   defp command(cmd, payload, state), do: {:noreply, identified_command(cmd, payload, state)}
 
   defp identified_command(:presence_update, presence, state) do
@@ -296,6 +448,8 @@ defmodule DiscordyGateway.Application.Session do
     session = %{pid: self(), id: state.id, identity: state.identity}
     %{state | voice_scope: VoiceRouting.route(session, state.voice_scope, request)}
   end
+
+  defp identified_command(:request_guild_members, _request, %{passive: true} = state), do: state
 
   defp identified_command(:request_guild_members, request, state) do
     _ = Guild.request_members(request.guild_id, self(), request)
@@ -411,6 +565,9 @@ defmodule DiscordyGateway.Application.Session do
     :ok = Ports.session_directory().register(state.id, identity.user_id, identity.device_id)
 
     case Ports.messages_client().fetch_read_states(identity.user_id) do
+      {:ok, %{versioned: false}} when payload.passive ->
+        close(state, :unknown_error)
+
       {:ok, reads} ->
         ready =
           Map.merge(ready, %{
@@ -436,10 +593,18 @@ defmodule DiscordyGateway.Application.Session do
       | identity: identity,
         status: :identified,
         friend_ids: Ready.friend_ids(ready),
+        private_channel_ids:
+          MapSet.new(for %{"id" => id} <- List.wrap(ready["private_channels"]), do: id),
         guild_ids: MapSet.new(Ready.guild_ids(ready))
     }
 
     :ok = Ports.call_defaults().put(identity.user_id, Ready.e2ee_calls_default?(ready))
+
+    state =
+      if payload.passive,
+        do: schedule_passive(%{state | passive: true, passive_used: true}),
+        else: state
+
     state = dispatch(state, "READY", Dispatch.encode(Ready.payload(identity, state.id, ready)))
     state = join_guilds(state, List.wrap(ready["guilds"]))
     replay_inbox(state)
@@ -473,6 +638,123 @@ defmodule DiscordyGateway.Application.Session do
         do: send_frame(state, Codec.relay(:e2ee_envelope, payload))
 
     :ok
+  end
+
+  defp schedule_passive(state) do
+    token = make_ref()
+    Process.send_after(self(), {:passive_flush, token}, @passive_interval_ms)
+    %{state | passive_token: token}
+  end
+
+  defp change_session_mode(%{passive: passive} = state, passive), do: {:noreply, state}
+
+  defp change_session_mode(%{read_state_versioned: false} = state, true),
+    do: close(state, :unknown_error)
+
+  defp change_session_mode(state, true) do
+    {:noreply,
+     schedule_passive(%{
+       state
+       | passive: true,
+         passive_used: true,
+         passive_sent: %PassiveUpdates{},
+         refreshing_guilds: MapSet.new()
+     })}
+  end
+
+  defp change_session_mode(state, false) do
+    case resume_read_states(state) do
+      {:ok, reads} ->
+        guilds = Enum.map(state.guild_ids, &%{"id" => &1})
+
+        state = %{
+          state
+          | passive: false,
+            passive_token: nil,
+            passive_updates: %PassiveUpdates{},
+            refreshing_guilds: state.guild_ids,
+            activation_token: make_ref()
+        }
+
+        state = sync_read_states(state, reads)
+
+        case refresh_guilds(state, guilds) do
+          {:ok, refreshed} -> {:noreply, refreshed}
+          {:error, _reason} -> close(state, :unknown_error)
+        end
+
+      {:error, _} ->
+        close(state, :unknown_error)
+    end
+  end
+
+  defp remember_guild_channels(state, guild_id, channels) do
+    channel_guilds =
+      Enum.reduce(List.wrap(channels), state.channel_guilds, fn
+        %{"id" => id}, acc -> Map.put(acc, id, guild_id)
+        _, acc -> acc
+      end)
+
+    %{state | channel_guilds: channel_guilds}
+  end
+
+  defp capture_guild_snapshot(state, guild_id, data) do
+    updates =
+      Enum.reduce(
+        List.wrap(data["channels"]) ++ List.wrap(data["threads"]),
+        state.passive_updates,
+        fn channel, acc ->
+          case channel do
+            %{"id" => channel_id, "last_message_id" => id} when is_binary(id) ->
+              PassiveUpdates.message(acc, guild_id, %{"channel_id" => channel_id, "id" => id})
+
+            _ ->
+              acc
+          end
+        end
+      )
+
+    updates =
+      Enum.reduce(List.wrap(data["voice_states"]), updates, fn voice, acc ->
+        PassiveUpdates.voice_state(acc, voice, voice["channel_id"])
+      end)
+
+    %{state | passive_updates: updates}
+  end
+
+  defp capture_guild_event(state, guild_id, event, encoded, gate) do
+    state =
+      if event in ~w(CHANNEL_CREATE CHANNEL_UPDATE THREAD_CREATE THREAD_UPDATE) do
+        remember_guild_channels(state, guild_id, [Jason.decode!(encoded)])
+      else
+        state
+      end
+
+    updates =
+      case event do
+        "MESSAGE_CREATE" ->
+          PassiveUpdates.message(state.passive_updates, guild_id, Jason.decode!(encoded))
+
+        "VOICE_STATE_UPDATE" ->
+          PassiveUpdates.voice_state(state.passive_updates, Jason.decode!(encoded), gate)
+
+        "THREAD_CREATE" ->
+          case Jason.decode!(encoded) do
+            %{"id" => channel_id, "last_message_id" => id} when is_binary(id) ->
+              PassiveUpdates.message(state.passive_updates, guild_id, %{
+                "channel_id" => channel_id,
+                "id" => id
+              })
+
+            _ ->
+              state.passive_updates
+          end
+
+        _ ->
+          state.passive_updates
+      end
+
+    %{state | passive_updates: updates}
   end
 
   ## RESUME
@@ -618,6 +900,7 @@ defmodule DiscordyGateway.Application.Session do
       |> follow_membership(type, data)
       |> follow_relationship(type, data)
       |> follow_settings(type, data)
+      |> follow_private_channel(type, data)
     else
       state
     end
@@ -628,6 +911,18 @@ defmodule DiscordyGateway.Application.Session do
        do: id in ids
 
   defp revoked?(_identity, _data), do: false
+
+  defp follow_private_channel(state, "CHANNEL_CREATE", %{"id" => id} = channel) do
+    if is_nil(channel["guild_id"]),
+      do: %{state | private_channel_ids: MapSet.put(state.private_channel_ids, id)},
+      else: state
+  end
+
+  defp follow_private_channel(state, "CHANNEL_DELETE", %{"id" => id}) do
+    %{state | private_channel_ids: MapSet.delete(state.private_channel_ids, id)}
+  end
+
+  defp follow_private_channel(state, _type, _data), do: state
 
   defp follow_settings(state, "USER_SETTINGS_UPDATE", %{"status" => status} = data)
        when status in ~w(online idle dnd invisible) and status != state.manual_status do
@@ -688,20 +983,40 @@ defmodule DiscordyGateway.Application.Session do
   defp seed(_guild), do: nil
 
   defp join_guild(state, guild_id, seed) do
+    case subscribe_guild(state, guild_id, seed) do
+      {:ok, joined} ->
+        joined
+
+      {:error, reason} ->
+        Logger.warning("guild #{guild_id} unavailable: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp refresh_guilds(state, guilds) do
+    Enum.reduce_while(guilds, {:ok, state}, fn guild, {:ok, acc} ->
+      case subscribe_guild(acc, guild["id"], nil) do
+        {:ok, joined} -> {:cont, {:ok, joined}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp subscribe_guild(state, guild_id, seed) do
     case Guild.join(guild_id, seed, subscriber(state)) do
       {:ok, pid} ->
         state = drop_guild_monitor(state, guild_id)
         ref = Process.monitor(pid)
 
-        %{
-          state
-          | guild_ids: MapSet.put(state.guild_ids, guild_id),
-            guild_refs: Map.put(state.guild_refs, ref, guild_id)
-        }
+        {:ok,
+         %{
+           state
+           | guild_ids: MapSet.put(state.guild_ids, guild_id),
+             guild_refs: Map.put(state.guild_refs, ref, guild_id)
+         }}
 
       {:error, reason} ->
-        Logger.warning("guild #{guild_id} unavailable: #{inspect(reason)}")
-        state
+        {:error, reason}
     end
   end
 
@@ -711,6 +1026,7 @@ defmodule DiscordyGateway.Application.Session do
       user_id: state.identity.user_id,
       intents: state.identity.intents,
       session_id: state.id,
+      snapshot_token: state.activation_token,
       bot: Identity.bot?(state.identity),
       application_id: state.identity.application_id
     }
@@ -723,8 +1039,37 @@ defmodule DiscordyGateway.Application.Session do
 
   defp forget_guild(state, guild_id) do
     state = drop_guild_monitor(state, guild_id)
-    %{state | guild_ids: MapSet.delete(state.guild_ids, guild_id)}
+    channel_ids = for {id, guild} <- state.channel_guilds, guild == guild_id, do: id
+
+    %{
+      state
+      | guild_ids: MapSet.delete(state.guild_ids, guild_id),
+        refreshing_guilds: MapSet.delete(state.refreshing_guilds, guild_id),
+        channel_guilds: Map.drop(state.channel_guilds, channel_ids),
+        passive_updates:
+          PassiveUpdates.forget_guild(state.passive_updates, guild_id, channel_ids),
+        passive_sent: PassiveUpdates.forget_guild(state.passive_sent, guild_id, channel_ids)
+    }
   end
+
+  defp forget_deleted_channel(state, guild_id, event, encoded)
+       when event in ~w(CHANNEL_DELETE THREAD_DELETE) do
+    case Jason.decode!(encoded) do
+      %{"id" => channel_id} ->
+        %{
+          state
+          | channel_guilds: Map.delete(state.channel_guilds, channel_id),
+            passive_updates:
+              PassiveUpdates.forget_channel(state.passive_updates, guild_id, channel_id),
+            passive_sent: PassiveUpdates.forget_channel(state.passive_sent, guild_id, channel_id)
+        }
+
+      _ ->
+        state
+    end
+  end
+
+  defp forget_deleted_channel(state, _guild_id, _event, _encoded), do: state
 
   defp drop_guild_monitor(state, guild_id) do
     {matching, others} = Enum.split_with(state.guild_refs, fn {_ref, id} -> id == guild_id end)
