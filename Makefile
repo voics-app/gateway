@@ -1,6 +1,6 @@
 .PHONY: dev test integration test-kafka lint build docker
 
-IMAGE ?= ghcr.io/discordy-voics/gateway:dev
+IMAGE ?= ghcr.io/voics-app/gateway:dev
 
 # Runs the gateway with the variables of .env (copy .env.example first).
 dev:
