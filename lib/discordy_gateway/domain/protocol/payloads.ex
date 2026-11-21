@@ -23,16 +23,22 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          {:ok, device_id} <- optional_string(d, "device_id"),
          {:ok, intents} <- intents(d),
          {:ok, properties} <- properties(d),
-         {:ok, presence} <- optional_presence(d) do
+         {:ok, presence} <- optional_presence(d),
+         {:ok, passive} <- optional_passive(d) do
       {:ok,
        %{
          token: token,
          device_id: device_id,
          intents: intents,
          properties: properties,
-         presence: presence
+         presence: presence,
+         passive: passive
        }}
     end
+  end
+
+  defp decode_map(:session_mode, d) do
+    with {:ok, passive} <- boolean(d, "passive", :required), do: {:ok, %{passive: passive}}
   end
 
   defp decode_map(:presence_update, d), do: presence(d)
@@ -173,6 +179,10 @@ defmodule DiscordyGateway.Domain.Protocol.Payloads do
          :ok <- max_length(user_ids, @max_ring_targets) do
       {:ok, %{channel_id: channel_id, user_ids: Enum.uniq(user_ids)}}
     end
+  end
+
+  defp optional_passive(d) do
+    if Map.has_key?(d, "passive"), do: boolean(d, "passive", :required), else: {:ok, false}
   end
 
   defp intents(d) do
