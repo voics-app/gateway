@@ -84,6 +84,13 @@ defmodule DiscordyGateway.Interface.RouterTest do
     assert %{status: 401} = call(:get, "/internal/v1/admin/stats")
     assert %{status: 401} = call(:get, "/internal/v1/admin/stats", [{"x-internal-token", "nope"}])
     assert %{status: 401} = call(:post, "/internal/v1/voice/nodes/a/drain")
+    assert %{status: 401} = call(:get, "/internal/v1/guilds/1/channels/2/voice-members/3")
+  end
+
+  test "voice membership lookup is false when no guild process is running" do
+    conn = call(:get, "/internal/v1/guilds/123/channels/456/voice-members/789", internal())
+    assert conn.status == 200
+    assert %{"connected" => false} = Jason.decode!(conn.resp_body)
   end
 
   test "admin stats reports sessions, guild processes and voice allocations" do

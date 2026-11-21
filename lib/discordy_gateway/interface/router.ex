@@ -69,6 +69,17 @@ defmodule DiscordyGateway.Interface.Router do
     end)
   end
 
+  get "/internal/v1/guilds/:guild_id/channels/:channel_id/voice-members/:user_id" do
+    conn
+    |> InternalAuth.call([])
+    |> maybe(fn conn ->
+      case Guild.user_in_voice?(guild_id, channel_id, user_id) do
+        {:ok, connected} -> json(conn, 200, %{"connected" => connected})
+        {:error, _reason} -> json(conn, 503, %{"error" => "voice_state_unavailable"})
+      end
+    end)
+  end
+
   post "/internal/v1/voice/nodes/:node_id/drain" do
     conn
     |> InternalAuth.call([])
